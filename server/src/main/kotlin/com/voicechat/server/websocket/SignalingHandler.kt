@@ -109,8 +109,8 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val remoteAddress = call.request.local.remoteAddress
-                val udpAddress = InetSocketAddress(remoteAddress, message.port)
+                val clientAddress = call.request.local.remoteAddress
+                val udpAddress = InetSocketAddress(clientAddress, message.port)
                 room.updateUdpAddress(currentUserId, udpAddress)
                 
                 logger.info { "User $currentUserId registered UDP address: $udpAddress" }

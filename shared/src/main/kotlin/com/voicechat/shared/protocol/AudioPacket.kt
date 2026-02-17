@@ -16,12 +16,16 @@ data class AudioPacket(
     }
 
     companion object {
+        private const val MAX_USER_ID_LENGTH = 256
+        
         fun fromBytes(bytes: ByteArray): AudioPacket? {
             if (bytes.size < 4) return null
             
             val buffer = ByteBuffer.wrap(bytes)
             val userIdLength = buffer.getInt()
             
+            // Validate userId length to prevent buffer overflow
+            if (userIdLength <= 0 || userIdLength > MAX_USER_ID_LENGTH) return null
             if (bytes.size < 4 + userIdLength) return null
             
             val userIdBytes = ByteArray(userIdLength)

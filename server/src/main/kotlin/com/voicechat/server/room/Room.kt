@@ -11,11 +11,16 @@ private val logger = KotlinLogging.logger {}
 
 class Room(val roomId: String) {
     private val users = ConcurrentHashMap<String, UserSession>()
+    private val nicknames = ConcurrentHashMap<String, String>() // nickname -> userId mapping
 
     fun addUser(session: UserSession): Boolean {
-        if (users.values.any { it.nickname == session.nickname }) {
+        // Atomically check and add nickname to prevent race condition
+        val previousUserId = nicknames.putIfAbsent(session.nickname, session.userId)
+        if (previousUserId != null) {
+            // Nickname already taken
             return false
         }
+        
         users[session.userId] = session
         logger.info { "User ${session.nickname} (${session.userId}) joined room $roomId" }
         return true
@@ -24,6 +29,7 @@ class Room(val roomId: String) {
     fun removeUser(userId: String): UserSession? {
         val session = users.remove(userId)
         session?.let {
+            nicknames.remove(it.nickname)
             logger.info { "User ${it.nickname} ($userId) left room $roomId" }
         }
         return session

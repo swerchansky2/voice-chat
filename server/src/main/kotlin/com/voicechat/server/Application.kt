@@ -24,6 +24,10 @@ fun main() {
     val httpPort = System.getenv("HTTP_PORT")?.toIntOrNull() ?: 8080
     val udpPort = System.getenv("UDP_PORT")?.toIntOrNull() ?: 9001
 
+    // Validate port ranges
+    require(httpPort in 1..65535) { "HTTP_PORT must be in range 1-65535, got $httpPort" }
+    require(udpPort in 1..65535) { "UDP_PORT must be in range 1-65535, got $udpPort" }
+
     logger.info { "Starting Voice Chat Server..." }
     logger.info { "HTTP/WebSocket port: $httpPort" }
     logger.info { "UDP port: $udpPort" }
@@ -41,7 +45,7 @@ fun Application.configureServer() {
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 15.seconds
-        maxFrameSize = Long.MAX_VALUE
+        maxFrameSize = 1024 * 1024 // 1MB limit for signaling messages
         masking = false
     }
 
