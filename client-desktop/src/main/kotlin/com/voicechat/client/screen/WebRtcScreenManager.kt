@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger("WebRTC")
 
-data class SdpMessage(val targetUserId: String, val sdp: String, val type: String)
+data class SdpMessage(val targetUserId: String, val sdp: String, val sdpType: String)
 data class IceMessage(val targetUserId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int)
 
 class WebRtcScreenManager(
@@ -32,7 +32,7 @@ class WebRtcScreenManager(
     private val onSdpAnswer: suspend (SdpMessage) -> Unit,
     private val onIceCandidate: suspend (IceMessage) -> Unit
 ) {
-    private val factory = PeerConnectionFactory()
+    private val factory by lazy { PeerConnectionFactory() }
 
     private var videoSource: VideoDesktopSource? = null
     private var videoTrack: VideoTrack? = null
@@ -78,6 +78,7 @@ class WebRtcScreenManager(
 
     fun startSending(settings: ScreenShareSettings) {
         isSender = true
+        factory // initialize WebRTC native environment before VideoDesktopSource
 
         videoSource = VideoDesktopSource().apply {
             setFrameRate(settings.fps)

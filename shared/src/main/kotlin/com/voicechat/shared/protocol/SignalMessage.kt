@@ -69,7 +69,7 @@ sealed class SignalMessage {
     data class SdpOffer(
         val targetUserId: String,
         val sdp: String,
-        val type: String
+        val sdpType: String
     ) : SignalMessage()
 
     @Serializable
@@ -77,7 +77,7 @@ sealed class SignalMessage {
     data class SdpAnswer(
         val targetUserId: String,
         val sdp: String,
-        val type: String
+        val sdpType: String
     ) : SignalMessage()
 
     @Serializable

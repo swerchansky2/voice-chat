@@ -229,7 +229,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 val relayMessage = SignalMessage.SdpOffer(
                     targetUserId = currentUserId!!,
                     sdp = message.sdp,
-                    type = message.type
+                    sdpType = message.sdpType
                 )
                 room.sendToUser(message.targetUserId, relayMessage)
                 logger.debug { "[WS] Relayed SDP offer from $currentUserId to ${message.targetUserId}" }
@@ -249,7 +249,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 val relayMessage = SignalMessage.SdpAnswer(
                     targetUserId = currentUserId!!,
                     sdp = message.sdp,
-                    type = message.type
+                    sdpType = message.sdpType
                 )
                 room.sendToUser(message.targetUserId, relayMessage)
                 logger.debug { "[WS] Relayed SDP answer from $currentUserId to ${message.targetUserId}" }

@@ -25,10 +25,10 @@ class ScreenEngine(
         return webRtcManager ?: WebRtcScreenManager(
             scope = scope,
             onSdpOffer = { msg ->
-                signalingClient.sendSdpOffer(msg.targetUserId, msg.sdp, msg.type)
+                signalingClient.sendSdpOffer(msg.targetUserId, msg.sdp, msg.sdpType)
             },
             onSdpAnswer = { msg ->
-                signalingClient.sendSdpAnswer(msg.targetUserId, msg.sdp, msg.type)
+                signalingClient.sendSdpAnswer(msg.targetUserId, msg.sdp, msg.sdpType)
             },
             onIceCandidate = { msg ->
                 signalingClient.sendIceCandidate(msg.targetUserId, msg.sdp, msg.sdpMid, msg.sdpMLineIndex)

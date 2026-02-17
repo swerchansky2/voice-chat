@@ -146,11 +146,11 @@ class SignalingClient(private val maxFrameSize: Long = 1024L * 1024) {
                 }
                 is SignalMessage.SdpOffer -> {
                     logger.info { "[WS] Received SDP offer from ${message.targetUserId}" }
-                    _events.emit(Event.SdpOfferReceived(message.targetUserId, message.sdp, message.type))
+                    _events.emit(Event.SdpOfferReceived(message.targetUserId, message.sdp, message.sdpType))
                 }
                 is SignalMessage.SdpAnswer -> {
                     logger.info { "[WS] Received SDP answer from ${message.targetUserId}" }
-                    _events.emit(Event.SdpAnswerReceived(message.targetUserId, message.sdp, message.type))
+                    _events.emit(Event.SdpAnswerReceived(message.targetUserId, message.sdp, message.sdpType))
                 }
                 is SignalMessage.IceCandidateMsg -> {
                     logger.debug { "[WS] Received ICE candidate from ${message.targetUserId}" }
@@ -181,14 +181,14 @@ class SignalingClient(private val maxFrameSize: Long = 1024L * 1024) {
         session?.sendSignalMessage(SignalMessage.StopScreenShare)
     }
 
-    suspend fun sendSdpOffer(targetUserId: String, sdp: String, type: String) {
+    suspend fun sendSdpOffer(targetUserId: String, sdp: String, sdpType: String) {
         logger.debug { "[WS] Sending SDP offer to $targetUserId" }
-        session?.sendSignalMessage(SignalMessage.SdpOffer(targetUserId, sdp, type))
+        session?.sendSignalMessage(SignalMessage.SdpOffer(targetUserId, sdp, sdpType))
     }
 
-    suspend fun sendSdpAnswer(targetUserId: String, sdp: String, type: String) {
+    suspend fun sendSdpAnswer(targetUserId: String, sdp: String, sdpType: String) {
         logger.debug { "[WS] Sending SDP answer to $targetUserId" }
-        session?.sendSignalMessage(SignalMessage.SdpAnswer(targetUserId, sdp, type))
+        session?.sendSignalMessage(SignalMessage.SdpAnswer(targetUserId, sdp, sdpType))
     }
 
     suspend fun sendIceCandidate(targetUserId: String, sdp: String, sdpMid: String, sdpMLineIndex: Int) {
