@@ -24,11 +24,11 @@ sealed class SignalMessage {
     
     @Serializable
     @SerialName("user_joined")
-    data class UserJoined(val nickname: String) : SignalMessage()
+    data class UserJoined(val userId: String, val nickname: String) : SignalMessage()
     
     @Serializable
     @SerialName("user_left")
-    data class UserLeft(val nickname: String) : SignalMessage()
+    data class UserLeft(val userId: String, val nickname: String) : SignalMessage()
     
     @Serializable
     @SerialName("error")
@@ -59,4 +59,33 @@ sealed class SignalMessage {
     @Serializable
     @SerialName("screen_share_stopped")
     data class ScreenShareStopped(val userId: String, val nickname: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("screen_share_viewers")
+    data class ScreenShareViewers(val viewerUserIds: List<String>) : SignalMessage()
+
+    @Serializable
+    @SerialName("sdp_offer")
+    data class SdpOffer(
+        val targetUserId: String,
+        val sdp: String,
+        val type: String
+    ) : SignalMessage()
+
+    @Serializable
+    @SerialName("sdp_answer")
+    data class SdpAnswer(
+        val targetUserId: String,
+        val sdp: String,
+        val type: String
+    ) : SignalMessage()
+
+    @Serializable
+    @SerialName("ice_candidate")
+    data class IceCandidateMsg(
+        val targetUserId: String,
+        val sdp: String,
+        val sdpMid: String,
+        val sdpMLineIndex: Int
+    ) : SignalMessage()
 }

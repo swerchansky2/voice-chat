@@ -1,6 +1,5 @@
 package com.voicechat.client.network
 
-import com.voicechat.shared.protocol.ScreenFrame
 import com.voicechat.shared.protocol.SignalMessage
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.client.*
@@ -17,7 +16,7 @@ import kotlinx.serialization.json.Json
 
 private val logger = KotlinLogging.logger("WS")
 
-class SignalingClient {
+class SignalingClient(private val maxFrameSize: Long = 1024L * 1024) {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -29,7 +28,7 @@ class SignalingClient {
                 ignoreUnknownKeys = true
                 isLenient = true
             })
-            maxFrameSize = 1024 * 1024
+            maxFrameSize = this@SignalingClient.maxFrameSize
         }
         install(ContentNegotiation) {
             json(Json {
@@ -49,12 +48,15 @@ class SignalingClient {
         data object Disconnected : Event()
         data class Joined(val userId: String) : Event()
         data class UserList(val users: List<String>) : Event()
-        data class UserJoined(val nickname: String) : Event()
-        data class UserLeft(val nickname: String) : Event()
+        data class UserJoined(val userId: String, val nickname: String) : Event()
+        data class UserLeft(val userId: String, val nickname: String) : Event()
         data class Error(val message: String) : Event()
         data class ScreenShareStarted(val userId: String, val nickname: String, val width: Int, val height: Int, val fps: Int) : Event()
         data class ScreenShareStopped(val userId: String, val nickname: String) : Event()
-        data class ScreenFrameReceived(val data: ByteArray) : Event()
+        data class ScreenShareViewers(val viewerUserIds: List<String>) : Event()
+        data class SdpOfferReceived(val fromUserId: String, val sdp: String, val type: String) : Event()
+        data class SdpAnswerReceived(val fromUserId: String, val sdp: String, val type: String) : Event()
+        data class IceCandidateReceived(val fromUserId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int) : Event()
     }
 
     private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
@@ -85,11 +87,6 @@ class SignalingClient {
                                 val text = frame.readText()
                                 logger.debug { "[WS] Received: $text" }
                                 handleMessage(text)
-                            }
-                            is Frame.Binary -> {
-                                val data = frame.readBytes()
-                                logger.debug { "Received binary frame: ${data.size} bytes" }
-                                _events.emit(Event.ScreenFrameReceived(data))
                             }
                             else -> {}
                         }
@@ -124,22 +121,40 @@ class SignalingClient {
                     _events.emit(Event.UserList(message.users))
                 }
                 is SignalMessage.UserJoined -> {
-                    logger.info { "[WS] Received UserJoined — \"${message.nickname}\"" }
-                    _events.emit(Event.UserJoined(message.nickname))
+                    logger.info { "[WS] Received UserJoined — \"${message.nickname}\" (${message.userId})" }
+                    _events.emit(Event.UserJoined(message.userId, message.nickname))
                 }
                 is SignalMessage.UserLeft -> {
-                    logger.info { "[WS] Received UserLeft — \"${message.nickname}\"" }
-                    _events.emit(Event.UserLeft(message.nickname))
+                    logger.info { "[WS] Received UserLeft — \"${message.nickname}\" (${message.userId})" }
+                    _events.emit(Event.UserLeft(message.userId, message.nickname))
                 }
                 is SignalMessage.Error -> {
                     logger.warn { "[WS] Received Error — ${message.message}" }
                     _events.emit(Event.Error(message.message))
                 }
                 is SignalMessage.ScreenShareStarted -> {
+                    logger.info { "[WS] Screen share started by ${message.nickname} (${message.width}x${message.height} @ ${message.fps}fps)" }
                     _events.emit(Event.ScreenShareStarted(message.userId, message.nickname, message.width, message.height, message.fps))
                 }
                 is SignalMessage.ScreenShareStopped -> {
+                    logger.info { "[WS] Screen share stopped by ${message.nickname}" }
                     _events.emit(Event.ScreenShareStopped(message.userId, message.nickname))
+                }
+                is SignalMessage.ScreenShareViewers -> {
+                    logger.info { "[WS] Received viewer list: ${message.viewerUserIds.size} viewers" }
+                    _events.emit(Event.ScreenShareViewers(message.viewerUserIds))
+                }
+                is SignalMessage.SdpOffer -> {
+                    logger.info { "[WS] Received SDP offer from ${message.targetUserId}" }
+                    _events.emit(Event.SdpOfferReceived(message.targetUserId, message.sdp, message.type))
+                }
+                is SignalMessage.SdpAnswer -> {
+                    logger.info { "[WS] Received SDP answer from ${message.targetUserId}" }
+                    _events.emit(Event.SdpAnswerReceived(message.targetUserId, message.sdp, message.type))
+                }
+                is SignalMessage.IceCandidateMsg -> {
+                    logger.debug { "[WS] Received ICE candidate from ${message.targetUserId}" }
+                    _events.emit(Event.IceCandidateReceived(message.targetUserId, message.sdp, message.sdpMid, message.sdpMLineIndex))
                 }
                 else -> {
                     logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
@@ -157,22 +172,28 @@ class SignalingClient {
     }
 
     suspend fun startScreenShare(width: Int, height: Int, fps: Int) {
-        logger.info { "Sending start screen share: ${width}x${height} @ ${fps}fps" }
+        logger.info { "[WS] Sending start screen share: ${width}x${height} @ ${fps}fps" }
         session?.sendSignalMessage(SignalMessage.StartScreenShare(width, height, fps))
     }
 
     suspend fun stopScreenShare() {
-        logger.info { "Sending stop screen share" }
+        logger.info { "[WS] Sending stop screen share" }
         session?.sendSignalMessage(SignalMessage.StopScreenShare)
     }
 
-    suspend fun sendScreenFrame(frame: ScreenFrame) {
-        try {
-            val data = frame.toBytes()
-            session?.send(Frame.Binary(true, data))
-        } catch (e: Exception) {
-            logger.error(e) { "Failed to send screen frame" }
-        }
+    suspend fun sendSdpOffer(targetUserId: String, sdp: String, type: String) {
+        logger.debug { "[WS] Sending SDP offer to $targetUserId" }
+        session?.sendSignalMessage(SignalMessage.SdpOffer(targetUserId, sdp, type))
+    }
+
+    suspend fun sendSdpAnswer(targetUserId: String, sdp: String, type: String) {
+        logger.debug { "[WS] Sending SDP answer to $targetUserId" }
+        session?.sendSignalMessage(SignalMessage.SdpAnswer(targetUserId, sdp, type))
+    }
+
+    suspend fun sendIceCandidate(targetUserId: String, sdp: String, sdpMid: String, sdpMLineIndex: Int) {
+        logger.debug { "[WS] Sending ICE candidate to $targetUserId" }
+        session?.sendSignalMessage(SignalMessage.IceCandidateMsg(targetUserId, sdp, sdpMid, sdpMLineIndex))
     }
 
     suspend fun disconnect() {

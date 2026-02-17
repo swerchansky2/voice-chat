@@ -1,89 +1,93 @@
 package com.voicechat.client.screen
 
 import com.voicechat.client.network.SignalingClient
-import com.voicechat.shared.protocol.ScreenFrame
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("ScreenEngine")
 
 class ScreenEngine(
     private val signalingClient: SignalingClient
 ) {
-    private val screenCapture = ScreenCapture()
-    private var encoder: ScreenEncoder? = null
-    private val decoder = ScreenDecoder()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private var userId: String? = null
+    private var webRtcManager: WebRtcScreenManager? = null
     private var isSharing = false
-    private var receivedFrameCount = 0L
+    private var screenSharerUserId: String? = null
 
-    val receivedFrame: StateFlow<BufferedImage?> = decoder.decodedFrame
+    val receivedFrame: StateFlow<BufferedImage?> get() = getOrCreateManager().receivedFrame
+
+    private fun getOrCreateManager(): WebRtcScreenManager {
+        return webRtcManager ?: WebRtcScreenManager(
+            scope = scope,
+            onSdpOffer = { msg ->
+                signalingClient.sendSdpOffer(msg.targetUserId, msg.sdp, msg.type)
+            },
+            onSdpAnswer = { msg ->
+                signalingClient.sendSdpAnswer(msg.targetUserId, msg.sdp, msg.type)
+            },
+            onIceCandidate = { msg ->
+                signalingClient.sendIceCandidate(msg.targetUserId, msg.sdp, msg.sdpMid, msg.sdpMLineIndex)
+            }
+        ).also { webRtcManager = it }
+    }
 
     fun startSharing(userId: String, settings: ScreenShareSettings) {
-        this.userId = userId
         isSharing = true
-
-        val res = settings.resolution
-        val fps = settings.fps
-
-        encoder = ScreenEncoder(res.width, res.height, fps, res.bitrate).also { it.start() }
-
-        screenCapture.start(scope, res.width, res.height, fps)
-
-        scope.launch {
-            screenCapture.frames.collect { image ->
-                if (!isSharing) return@collect
-                val encoded = encoder?.encode(image) ?: return@collect
-                val frame = ScreenFrame(userId, encoded)
-                signalingClient.sendScreenFrame(frame)
-            }
-        }
-
-        logger.info { "[ScreenEngine] Sharing started: ${res.width}x${res.height} @ ${fps}fps, H.264" }
+        val manager = getOrCreateManager()
+        manager.startSending(settings)
+        logger.info { "[ScreenEngine] Started sharing via WebRTC" }
     }
 
     fun stopSharing() {
         isSharing = false
-        screenCapture.stop()
-        encoder?.stop()
-        encoder = null
-        logger.info { "[ScreenEngine] Sharing stopped" }
+        webRtcManager?.stopSending()
+        logger.info { "[ScreenEngine] Stopped sharing" }
     }
 
-    fun startReceiving() {
-        receivedFrameCount = 0
-        decoder.start(scope)
-        logger.info { "[ScreenEngine] Receiving started" }
+    fun startReceiving(sharerUserId: String) {
+        screenSharerUserId = sharerUserId
+        getOrCreateManager()
+        logger.info { "[ScreenEngine] Ready to receive from $sharerUserId" }
     }
 
     fun stopReceiving() {
-        decoder.stop()
-        logger.info { "[ScreenEngine] Receiving stopped" }
+        screenSharerUserId = null
+        webRtcManager?.closeAllPeerConnections()
+        logger.info { "[ScreenEngine] Stopped receiving" }
     }
 
-    fun handleReceivedFrame(data: ByteArray) {
-        val screenFrame = ScreenFrame.fromBytes(data)
-        if (screenFrame == null) {
-            logger.warn { "[ScreenEngine] Failed to parse ScreenFrame from ${data.size} bytes" }
-            return
-        }
+    fun createOfferForViewer(viewerUserId: String) {
+        if (!isSharing) return
+        getOrCreateManager().createOfferForViewer(viewerUserId)
+    }
 
-        receivedFrameCount++
-        if (receivedFrameCount % 60 == 1L) {
-            logger.info { "[ScreenEngine] Fed frame #$receivedFrameCount to decoder, H.264 chunk: ${screenFrame.encodedData.size} bytes" }
-        }
+    fun handleSdpOffer(fromUserId: String, sdp: String, type: String) {
+        getOrCreateManager().handleSdpOffer(fromUserId, sdp, type)
+    }
 
-        decoder.feedData(screenFrame.encodedData)
+    fun handleSdpAnswer(fromUserId: String, sdp: String, type: String) {
+        getOrCreateManager().handleSdpAnswer(fromUserId, sdp, type)
+    }
+
+    fun handleIceCandidate(fromUserId: String, sdp: String, sdpMid: String, sdpMLineIndex: Int) {
+        getOrCreateManager().handleIceCandidate(fromUserId, sdp, sdpMid, sdpMLineIndex)
+    }
+
+    fun closePeerConnection(userId: String) {
+        webRtcManager?.closePeerConnection(userId)
     }
 
     fun clearReceivedFrame() {
-        decoder.clearFrame()
+        webRtcManager?.clearReceivedFrame()
+    }
+
+    fun dispose() {
+        webRtcManager?.dispose()
+        webRtcManager = null
     }
 }

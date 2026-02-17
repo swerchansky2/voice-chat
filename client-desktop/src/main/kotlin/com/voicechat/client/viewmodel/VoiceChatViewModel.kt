@@ -60,6 +60,8 @@ class VoiceChatViewModel(
     private var currentNickname: String? = null
     private var currentHost: String? = null
 
+    private var screenSharerUserId: String? = null
+
     init {
         observeSignalingEvents()
         observeAudioPackets()
@@ -78,8 +80,10 @@ class VoiceChatViewModel(
                         _userList.value = emptyList()
                         _isScreenSharing.value = false
                         _screenSharerNickname.value = null
+                        screenSharerUserId = null
                         screenEngine.stopSharing()
                         screenEngine.stopReceiving()
+                        screenEngine.clearReceivedFrame()
                         audioEngine.stop()
                         udpAudioClient.stop()
                     }
@@ -98,12 +102,19 @@ class VoiceChatViewModel(
                         _userList.value = event.users
                     }
                     is SignalingClient.Event.UserJoined -> {
-                        logger.info { "[VM] User joined: \"${event.nickname}\"" }
+                        logger.info { "[VM] User joined: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value + event.nickname
+
+                        if (_isScreenSharing.value) {
+                            logger.info { "[VM] Creating WebRTC offer for new viewer ${event.userId}" }
+                            screenEngine.createOfferForViewer(event.userId)
+                        }
                     }
                     is SignalingClient.Event.UserLeft -> {
-                        logger.info { "[VM] User left: \"${event.nickname}\"" }
+                        logger.info { "[VM] User left: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value - event.nickname
+
+                        screenEngine.closePeerConnection(event.userId)
                     }
                     is SignalingClient.Event.Error -> {
                         logger.error { "[VM] Error: ${event.message}" }
@@ -111,25 +122,41 @@ class VoiceChatViewModel(
                         _connectionState.value = ConnectionState.Error(event.message)
                     }
                     is SignalingClient.Event.ScreenShareStarted -> {
-                        logger.info { "Screen share started by ${event.nickname} (${event.width}x${event.height} @ ${event.fps}fps)" }
+                        logger.info { "[VM] Screen share started by ${event.nickname} (${event.width}x${event.height} @ ${event.fps}fps)" }
                         _screenSharerNickname.value = event.nickname
+                        screenSharerUserId = event.userId
                         if (event.userId == currentUserId) {
                             _isScreenSharing.value = true
                         } else {
-                            screenEngine.startReceiving()
+                            screenEngine.startReceiving(event.userId)
                         }
                     }
                     is SignalingClient.Event.ScreenShareStopped -> {
-                        logger.info { "Screen share stopped by ${event.nickname}" }
+                        logger.info { "[VM] Screen share stopped by ${event.nickname}" }
                         _screenSharerNickname.value = null
+                        screenSharerUserId = null
                         if (event.userId == currentUserId) {
                             _isScreenSharing.value = false
                         }
                         screenEngine.stopReceiving()
                         screenEngine.clearReceivedFrame()
                     }
-                    is SignalingClient.Event.ScreenFrameReceived -> {
-                        screenEngine.handleReceivedFrame(event.data)
+                    is SignalingClient.Event.ScreenShareViewers -> {
+                        logger.info { "[VM] Creating WebRTC offers for ${event.viewerUserIds.size} existing viewers" }
+                        for (viewerId in event.viewerUserIds) {
+                            screenEngine.createOfferForViewer(viewerId)
+                        }
+                    }
+                    is SignalingClient.Event.SdpOfferReceived -> {
+                        logger.info { "[VM] SDP offer from ${event.fromUserId}" }
+                        screenEngine.handleSdpOffer(event.fromUserId, event.sdp, event.type)
+                    }
+                    is SignalingClient.Event.SdpAnswerReceived -> {
+                        logger.info { "[VM] SDP answer from ${event.fromUserId}" }
+                        screenEngine.handleSdpAnswer(event.fromUserId, event.sdp, event.type)
+                    }
+                    is SignalingClient.Event.IceCandidateReceived -> {
+                        screenEngine.handleIceCandidate(event.fromUserId, event.sdp, event.sdpMid, event.sdpMLineIndex)
                     }
                 }
             }
@@ -176,14 +203,15 @@ class VoiceChatViewModel(
                 screenEngine.stopSharing()
             }
             screenEngine.stopReceiving()
+            screenEngine.clearReceivedFrame()
             signalingClient.disconnect()
             udpAudioClient.stop()
             audioEngine.stop()
-            screenEngine.clearReceivedFrame()
             _connectionState.value = ConnectionState.Disconnected
             _userList.value = emptyList()
             _isScreenSharing.value = false
             _screenSharerNickname.value = null
+            screenSharerUserId = null
             currentUserId = null
             currentNickname = null
             currentHost = null

@@ -8,6 +8,10 @@ import com.voicechat.client.di.clientModule
 import com.voicechat.client.ui.VoiceChatApp
 import org.koin.core.context.startKoin
 
+object AppConfig {
+    val WS_MAX_FRAME_SIZE: Long = 1L * 1024 * 1024 // 1MB — only JSON signaling, no binary video data
+}
+
 fun main() = application {
     startKoin {
         modules(clientModule)

@@ -51,12 +51,6 @@ class SignalingHandler(private val roomManager: RoomManager) {
                             }
                         }
 
-                        is Frame.Binary -> {
-                            currentUserId?.let { userId ->
-                                handleBinaryFrame(frame, userId, currentRoomId)
-                            }
-                        }
-
                         else -> {}
                     }
                 }
@@ -65,33 +59,6 @@ class SignalingHandler(private val roomManager: RoomManager) {
             } finally {
                 currentUserId?.let { userId ->
                     handleDisconnect(userId, currentNickname, currentRoomId)
-                }
-            }
-        }
-    }
-
-    private suspend fun DefaultWebSocketServerSession.handleBinaryFrame(
-        frame: Frame.Binary,
-        senderId: String,
-        roomId: String
-    ) {
-        val room = roomManager.getRoom(roomId) ?: return
-        val sender = room.getUser(senderId) ?: return
-
-        if (!sender.isScreenSharing) {
-            logger.warn { "User $senderId sent screen data but is not sharing" }
-            return
-        }
-
-        val data = frame.readBytes()
-        logger.debug { "Relaying screen frame from ${sender.nickname}, size: ${data.size}" }
-
-        room.getAllUsers().forEach { user ->
-            if (user.userId != senderId) {
-                try {
-                    user.websocketSession.send(Frame.Binary(true, data))
-                } catch (e: Exception) {
-                    logger.error(e) { "Failed to relay screen frame to ${user.nickname}" }
                 }
             }
         }
@@ -132,7 +99,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
 
                 sendMessage(SignalMessage.UserList(userList))
 
-                room.broadcast(SignalMessage.UserJoined(message.nickname), excludeUserId = userId)
+                room.broadcast(SignalMessage.UserJoined(userId, message.nickname), excludeUserId = userId)
 
 
                 val screenSharer = room.getScreenSharer()
@@ -212,7 +179,14 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     )
                 )
 
-                logger.info { "User ${user.nickname} started screen sharing: ${message.width}x${message.height} @ ${message.fps}fps" }
+                val viewerIds = room.getAllUsers()
+                    .filter { it.userId != currentUserId }
+                    .map { it.userId }
+                if (viewerIds.isNotEmpty()) {
+                    sendMessage(SignalMessage.ScreenShareViewers(viewerIds))
+                }
+
+                logger.info { "User ${user.nickname} started screen sharing: ${message.width}x${message.height} @ ${message.fps}fps, viewers: ${viewerIds.size}" }
             }
 
             is SignalMessage.StopScreenShare -> {
@@ -241,6 +215,67 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 logger.info { "User ${user.nickname} stopped screen sharing" }
             }
 
+            is SignalMessage.SdpOffer -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId) ?: return
+                val targetUser = room.getUser(message.targetUserId)
+                if (targetUser == null) {
+                    logger.warn { "[WS] SDP offer target ${message.targetUserId} not found" }
+                    return
+                }
+                val relayMessage = SignalMessage.SdpOffer(
+                    targetUserId = currentUserId!!,
+                    sdp = message.sdp,
+                    type = message.type
+                )
+                room.sendToUser(message.targetUserId, relayMessage)
+                logger.debug { "[WS] Relayed SDP offer from $currentUserId to ${message.targetUserId}" }
+            }
+
+            is SignalMessage.SdpAnswer -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId) ?: return
+                val targetUser = room.getUser(message.targetUserId)
+                if (targetUser == null) {
+                    logger.warn { "[WS] SDP answer target ${message.targetUserId} not found" }
+                    return
+                }
+                val relayMessage = SignalMessage.SdpAnswer(
+                    targetUserId = currentUserId!!,
+                    sdp = message.sdp,
+                    type = message.type
+                )
+                room.sendToUser(message.targetUserId, relayMessage)
+                logger.debug { "[WS] Relayed SDP answer from $currentUserId to ${message.targetUserId}" }
+            }
+
+            is SignalMessage.IceCandidateMsg -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId) ?: return
+                val targetUser = room.getUser(message.targetUserId)
+                if (targetUser == null) {
+                    logger.warn { "[WS] ICE candidate target ${message.targetUserId} not found" }
+                    return
+                }
+                val relayMessage = SignalMessage.IceCandidateMsg(
+                    targetUserId = currentUserId!!,
+                    sdp = message.sdp,
+                    sdpMid = message.sdpMid,
+                    sdpMLineIndex = message.sdpMLineIndex
+                )
+                room.sendToUser(message.targetUserId, relayMessage)
+                logger.debug { "[WS] Relayed ICE candidate from $currentUserId to ${message.targetUserId}" }
+            }
+
             else -> {
                 logger.warn { "[WS] Unexpected message type: ${message::class.simpleName} from ${currentNickname ?: "unknown"}" }
             }
@@ -259,7 +294,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
             if (wasSharing) {
                 room.broadcast(SignalMessage.ScreenShareStopped(userId, it.nickname))
             }
-            room.broadcast(SignalMessage.UserLeft(it.nickname))
+            room.broadcast(SignalMessage.UserLeft(userId, it.nickname))
             roomManager.removeRoomIfEmpty(roomId)
             logger.info { "[WS] User \"${it.nickname}\" ($userId) disconnected" }
         }
