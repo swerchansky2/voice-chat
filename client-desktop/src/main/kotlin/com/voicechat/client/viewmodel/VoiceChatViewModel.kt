@@ -42,6 +42,7 @@ class VoiceChatViewModel(
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
+    private var currentHost: String? = null
 
     init {
         observeSignalingEvents()
@@ -68,7 +69,7 @@ class VoiceChatViewModel(
                         _connectionState.value = ConnectionState.Connected
                         
                         // Start UDP client and register
-                        val udpPort = udpAudioClient.start()
+                        val udpPort = udpAudioClient.start(currentHost!!)
                         signalingClient.registerUdp(udpPort)
                         
                         // Start audio engine
@@ -112,6 +113,7 @@ class VoiceChatViewModel(
         }
 
         currentNickname = nickname
+        currentHost = host
         _connectionState.value = ConnectionState.Connecting
         _errorMessage.value = null
 
@@ -135,6 +137,7 @@ class VoiceChatViewModel(
             _userList.value = emptyList()
             currentUserId = null
             currentNickname = null
+            currentHost = null
         }
     }
 

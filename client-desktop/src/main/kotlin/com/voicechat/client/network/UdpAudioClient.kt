@@ -16,25 +16,28 @@ private val logger = KotlinLogging.logger {}
 class UdpAudioClient {
     private var socket: DatagramSocket? = null
     private var receiveJob: Job? = null
-    private var serverAddress: InetAddress? = null
+    private lateinit var serverAddress: InetAddress
     private var serverPort: Int = 9001 // Default UDP port for server
 
     private val _receivedPackets = MutableSharedFlow<AudioPacket>()
     val receivedPackets: SharedFlow<AudioPacket> = _receivedPackets.asSharedFlow()
 
-    fun start(): Int {
+    fun start(serverHost: String, serverUdpPort: Int = 9001): Int {
         stop()
-        
+
+        serverAddress = InetAddress.getByName(serverHost)
+        serverPort = serverUdpPort
+
         socket = DatagramSocket()
         val localPort = socket!!.localPort
-        
-        logger.info { "UDP client started on port $localPort" }
-        
+
+        logger.info { "UDP client started on port $localPort, server: $serverHost:$serverUdpPort" }
+
         // Start receiving
         receiveJob = CoroutineScope(Dispatchers.IO).launch {
             receiveLoop()
         }
-        
+
         return localPort
     }
 
@@ -53,14 +56,7 @@ class UdpAudioClient {
             try {
                 val packet = DatagramPacket(buffer, buffer.size)
                 socket?.receive(packet)
-                
-                // First time we receive, save server address
-                if (serverAddress == null) {
-                    serverAddress = packet.address
-                    serverPort = packet.port
-                    logger.info { "Server address set to ${packet.address}:${packet.port}" }
-                }
-                
+
                 val data = packet.data.copyOfRange(0, packet.length)
                 val audioPacket = AudioPacket.fromBytes(data)
                 
@@ -77,13 +73,12 @@ class UdpAudioClient {
         }
     }
 
-    fun sendAudioPacket(packet: AudioPacket, serverHost: String = "localhost") {
+    fun sendAudioPacket(packet: AudioPacket) {
         val socket = this.socket ?: return
-        
+
         try {
             val data = packet.toBytes()
-            val address = serverAddress ?: InetAddress.getByName(serverHost)
-            val datagramPacket = DatagramPacket(data, data.size, address, serverPort)
+            val datagramPacket = DatagramPacket(data, data.size, serverAddress, serverPort)
             socket.send(datagramPacket)
         } catch (e: Exception) {
             logger.error(e) { "Failed to send audio packet" }
