@@ -9,8 +9,6 @@ import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoFrame
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
-import dev.onvoid.webrtc.media.video.desktop.DesktopSource
-import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,23 +81,7 @@ class WebRtcScreenManager(
         videoSource = VideoDesktopSource().apply {
             setFrameRate(settings.fps)
             setMaxFrameSize(settings.resolution.width, settings.resolution.height)
-
-            try {
-                val capturer = ScreenCapturer()
-                val screens: List<DesktopSource> = capturer.desktopSources
-                if (screens.isNotEmpty()) {
-                    setSourceId(screens[0].id, false)
-                    logger.info { "[WebRTC] Capturing screen: ${screens[0].title} (id=${screens[0].id})" }
-                } else {
-                    setSourceId(0, false)
-                    logger.info { "[WebRTC] No screens found, using default (0)" }
-                }
-                capturer.dispose()
-            } catch (e: Exception) {
-                logger.warn(e) { "[WebRTC] Failed to enumerate screens, using default" }
-                setSourceId(0, false)
-            }
-
+            setSourceId(0, false)
             start()
         }
 
