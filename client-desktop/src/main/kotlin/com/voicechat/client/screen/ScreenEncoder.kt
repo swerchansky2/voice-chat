@@ -34,9 +34,9 @@ class ScreenEncoder(
             videoBitrate = bitrate
             pixelFormat = avutil.AV_PIX_FMT_YUV420P
             gopSize = fps * 2
-            videoOption("preset", "ultrafast")
-            videoOption("tune", "zerolatency")
-            videoOption("crf", "23")
+            setVideoOption("preset", "ultrafast")
+            setVideoOption("tune", "zerolatency")
+            setVideoOption("crf", "23")
         }
         recorder!!.start()
         frameNumber = 0
