@@ -22,6 +22,7 @@ class ScreenEngine(
 
     private var userId: String? = null
     private var isSharing = false
+    private var receivedFrameCount = 0L
 
     val receivedFrame: StateFlow<BufferedImage?> = decoder.decodedFrame
 
@@ -45,7 +46,7 @@ class ScreenEngine(
             }
         }
 
-        logger.info { "Screen sharing started: ${res.width}x${res.height} @ ${fps}fps, H.264" }
+        logger.info { "[ScreenEngine] Sharing started: ${res.width}x${res.height} @ ${fps}fps, H.264" }
     }
 
     fun stopSharing() {
@@ -53,21 +54,32 @@ class ScreenEngine(
         screenCapture.stop()
         encoder?.stop()
         encoder = null
-        logger.info { "Screen sharing stopped" }
+        logger.info { "[ScreenEngine] Sharing stopped" }
     }
 
     fun startReceiving() {
+        receivedFrameCount = 0
         decoder.start(scope)
-        logger.info { "Screen receiving started" }
+        logger.info { "[ScreenEngine] Receiving started" }
     }
 
     fun stopReceiving() {
         decoder.stop()
-        logger.info { "Screen receiving stopped" }
+        logger.info { "[ScreenEngine] Receiving stopped" }
     }
 
     fun handleReceivedFrame(data: ByteArray) {
-        val screenFrame = ScreenFrame.fromBytes(data) ?: return
+        val screenFrame = ScreenFrame.fromBytes(data)
+        if (screenFrame == null) {
+            logger.warn { "[ScreenEngine] Failed to parse ScreenFrame from ${data.size} bytes" }
+            return
+        }
+
+        receivedFrameCount++
+        if (receivedFrameCount % 60 == 1L) {
+            logger.info { "[ScreenEngine] Fed frame #$receivedFrameCount to decoder, H.264 chunk: ${screenFrame.encodedData.size} bytes" }
+        }
+
         decoder.feedData(screenFrame.encodedData)
     }
 
