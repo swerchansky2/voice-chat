@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
-import java.awt.image.DataBufferByte
+import java.awt.image.DataBufferInt
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger("WebRTC")
@@ -49,13 +51,12 @@ class WebRtcScreenManager(
                 val width = buffer.width
                 val height = buffer.height
 
-                // Use native-optimized conversion: I420 -> BGRA (matches TYPE_4BYTE_ABGR byte order)
                 val dstBytes = ByteArray(width * height * 4)
-                VideoBufferConverter.convertFromI420(buffer, dstBytes, FourCC.ABGR)
+                VideoBufferConverter.convertFromI420(buffer, dstBytes, FourCC.ARGB)
 
-                val image = BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR)
-                val imgData = (image.raster.dataBuffer as DataBufferByte).data
-                System.arraycopy(dstBytes, 0, imgData, 0, dstBytes.size)
+                val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+                val intData = (image.raster.dataBuffer as DataBufferInt).data
+                ByteBuffer.wrap(dstBytes).order(ByteOrder.BIG_ENDIAN).asIntBuffer().get(intData)
 
                 _receivedFrame.value = image
             } catch (e: Exception) {
@@ -75,18 +76,28 @@ class WebRtcScreenManager(
     }
 
     fun startSending(settings: ScreenShareSettings) {
+        if (System.getProperty("os.name").lowercase().contains("linux")) {
+            throw UnsupportedOperationException(
+                "Screen sharing is not yet supported on Linux. " +
+                "The native WebRTC desktop capture module crashes in this environment. " +
+                "Try running with a virtual camera (v4l2loopback) as a workaround."
+            )
+        }
+
+        val effectiveFps = minOf(settings.fps, settings.resolution.maxFps)
+
         isSender = true
         factory // initialize WebRTC native environment before VideoDesktopSource
 
         videoSource = VideoDesktopSource().apply {
-            setFrameRate(settings.fps)
+            setFrameRate(effectiveFps)
             setMaxFrameSize(settings.resolution.width, settings.resolution.height)
             setSourceId(0, false)
             start()
         }
 
         videoTrack = factory.createVideoTrack("screen0", videoSource)
-        logger.info { "[WebRTC] Sender started: ${settings.resolution.width}x${settings.resolution.height} @ ${settings.fps}fps" }
+        logger.info { "[WebRTC] Sender started: ${settings.resolution.width}x${settings.resolution.height} @ ${effectiveFps}fps" }
     }
 
     fun stopSending() {

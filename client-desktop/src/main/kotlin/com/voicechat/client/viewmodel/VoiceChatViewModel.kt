@@ -237,10 +237,16 @@ class VoiceChatViewModel(
                 signalingClient.startScreenShare(
                     settings.resolution.width,
                     settings.resolution.height,
-                    settings.fps
+                    minOf(settings.fps, settings.resolution.maxFps)
                 )
-                screenEngine.startSharing(userId, settings)
-                _isScreenSharing.value = true
+                try {
+                    screenEngine.startSharing(userId, settings)
+                    _isScreenSharing.value = true
+                } catch (e: Exception) {
+                    logger.error(e) { "[VM] Failed to start screen sharing" }
+                    signalingClient.stopScreenShare()
+                    _errorMessage.value = e.message ?: "Failed to start screen sharing"
+                }
             }
         }
     }
