@@ -17,6 +17,11 @@ import kotlinx.serialization.json.Json
 private val logger = KotlinLogging.logger {}
 
 class SignalingClient {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+    
     private val client = HttpClient(CIO) {
         install(WebSockets) {
             contentConverter = KotlinxWebsocketSerializationConverter(Json {
@@ -47,6 +52,11 @@ class SignalingClient {
         data class Error(val message: String) : Event()
     }
 
+    private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
+        val text = json.encodeToString(SignalMessage.serializer(), message)
+        send(Frame.Text(text))
+    }
+
     suspend fun connect(host: String, port: Int, nickname: String) {
         try {
             logger.info { "Connecting to ws://$host:$port/ws/room" }
@@ -62,7 +72,7 @@ class SignalingClient {
                 // Send join message
                 val joinMessage = SignalMessage.Join(nickname)
                 logger.info { "Sending join message: $joinMessage" }
-                sendSerialized(joinMessage)
+                sendSignalMessage(joinMessage)
                 
                 // Listen for messages
                 try {
@@ -93,7 +103,7 @@ class SignalingClient {
 
     private suspend fun handleMessage(text: String) {
         try {
-            val message = Json.decodeFromString<SignalMessage>(text)
+            val message = json.decodeFromString<SignalMessage>(text)
             logger.info { "Parsed message: $message" }
             
             when (message) {
@@ -124,12 +134,12 @@ class SignalingClient {
     suspend fun registerUdp(port: Int) {
         val message = SignalMessage.RegisterUdp(port)
         logger.info { "Registering UDP port: $port" }
-        session?.sendSerialized(message)
+        session?.sendSignalMessage(message)
     }
 
     suspend fun disconnect() {
         try {
-            session?.sendSerialized(SignalMessage.Leave)
+            session?.sendSignalMessage(SignalMessage.Leave)
             session?.close()
         } catch (e: Exception) {
             logger.error(e) { "Error during disconnect" }
