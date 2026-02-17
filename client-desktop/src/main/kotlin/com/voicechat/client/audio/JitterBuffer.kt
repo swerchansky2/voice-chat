@@ -2,9 +2,6 @@ package com.voicechat.client.audio
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.TreeMap
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger("Jitter")
 
@@ -14,66 +11,86 @@ class JitterBuffer(
 ) {
     companion object {
         private const val BUFFER_DEPTH = 3 // frames to buffer before starting playback
-        private const val FRAME_INTERVAL_MS = 20L
-        private const val MAX_BUFFER_SIZE = 50 // drop if buffer grows too large
+        private const val MAX_BUFFER_SIZE = 50
     }
 
-    private val buffer = TreeMap<Int, ByteArray>() // sequenceNumber -> opus data
+    private val lock = Object()
+    private val buffer = TreeMap<Int, ByteArray>()
     private var nextExpectedSeq = -1
     private var started = false
-    private var scheduler: ScheduledExecutorService? = null
+    @Volatile
+    private var running = false
+    private var playbackThread: Thread? = null
 
-    @Synchronized
     fun put(sequenceNumber: Int, opusData: ByteArray) {
-        // Drop packets that are too old
-        if (nextExpectedSeq >= 0 && sequenceNumber < nextExpectedSeq) {
-            return
-        }
-
-        buffer[sequenceNumber] = opusData
-
-        // Drop oldest if buffer grows too large
-        while (buffer.size > MAX_BUFFER_SIZE) {
-            buffer.pollFirstEntry()
-        }
-
-        // Start playback once we've buffered enough
-        if (!started && buffer.size >= BUFFER_DEPTH) {
-            started = true
-            nextExpectedSeq = buffer.firstKey()
-            startPlaybackTimer()
-        }
-    }
-
-    private fun startPlaybackTimer() {
-        scheduler = Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "jitter-playback").apply { isDaemon = true }
-        }
-        scheduler?.scheduleAtFixedRate(::tick, 0, FRAME_INTERVAL_MS, TimeUnit.MILLISECONDS)
-        logger.info { "[Jitter] Playback timer started" }
-    }
-
-    @Synchronized
-    private fun tick() {
-        try {
-            val opusData = buffer.remove(nextExpectedSeq)
-            val pcm = if (opusData != null) {
-                codec.decode(opusData)
-            } else {
-                // Packet missing — use PLC
-                codec.decodePLC()
+        synchronized(lock) {
+            if (nextExpectedSeq >= 0 && sequenceNumber < nextExpectedSeq) {
+                return
             }
-            playback.playFrame(pcm)
-            nextExpectedSeq++
-        } catch (e: Exception) {
-            logger.error(e) { "[Jitter] Error in playback tick" }
+
+            buffer[sequenceNumber] = opusData
+
+            while (buffer.size > MAX_BUFFER_SIZE) {
+                buffer.pollFirstEntry()
+            }
+
+            if (!started && buffer.size >= BUFFER_DEPTH) {
+                started = true
+                nextExpectedSeq = buffer.firstKey()
+                lock.notifyAll()
+            }
+        }
+    }
+
+    fun start() {
+        running = true
+        playbackThread = Thread({
+            playbackLoop()
+        }, "jitter-playback").apply {
+            isDaemon = true
+            start()
+        }
+        logger.info { "[Jitter] Started" }
+    }
+
+    private fun playbackLoop() {
+        // Wait until we have enough buffered frames
+        synchronized(lock) {
+            while (running && !started) {
+                lock.wait(100)
+            }
+        }
+
+        while (running) {
+            try {
+                val opusData = synchronized(lock) {
+                    val data = buffer.remove(nextExpectedSeq)
+                    nextExpectedSeq++
+                    data
+                }
+
+                val pcm = if (opusData != null) {
+                    codec.decode(opusData)
+                } else {
+                    codec.decodePLC()
+                }
+
+                // SourceDataLine.write() blocks when its buffer is full,
+                // naturally providing 20ms frame pacing from the audio hardware clock
+                playback.playFrame(pcm)
+            } catch (e: Exception) {
+                if (running) {
+                    logger.error(e) { "[Jitter] Error in playback" }
+                }
+            }
         }
     }
 
     fun stop() {
-        scheduler?.shutdownNow()
-        scheduler = null
-        synchronized(this) {
+        running = false
+        playbackThread?.interrupt()
+        playbackThread = null
+        synchronized(lock) {
             buffer.clear()
             started = false
             nextExpectedSeq = -1

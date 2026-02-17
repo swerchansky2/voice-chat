@@ -29,7 +29,7 @@ class AudioEngine(
         sequenceCounter = 0
 
         audioPlayback.start()
-        jitterBuffer = JitterBuffer(opusCodec, audioPlayback)
+        jitterBuffer = JitterBuffer(opusCodec, audioPlayback).also { it.start() }
         audioCapture.start()
 
         // Subscribe to captured audio
