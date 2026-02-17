@@ -37,4 +37,26 @@ sealed class SignalMessage {
     @Serializable
     @SerialName("joined")
     data class Joined(val userId: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("start_screen_share")
+    data class StartScreenShare(val width: Int, val height: Int, val fps: Int) : SignalMessage()
+
+    @Serializable
+    @SerialName("stop_screen_share")
+    data object StopScreenShare : SignalMessage()
+
+    @Serializable
+    @SerialName("screen_share_started")
+    data class ScreenShareStarted(
+        val userId: String,
+        val nickname: String,
+        val width: Int,
+        val height: Int,
+        val fps: Int
+    ) : SignalMessage()
+
+    @Serializable
+    @SerialName("screen_share_stopped")
+    data class ScreenShareStopped(val userId: String, val nickname: String) : SignalMessage()
 }

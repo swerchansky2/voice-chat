@@ -71,5 +71,20 @@ class Room(val roomId: String) {
         logger.info { "[Room] Updated UDP address for \"${user?.nickname ?: userId}\": $address" }
     }
 
+    fun setScreenSharing(userId: String, sharing: Boolean, width: Int = 0, height: Int = 0, fps: Int = 0) {
+        users[userId]?.let {
+            it.isScreenSharing = sharing
+            if (sharing) {
+                it.screenShareWidth = width
+                it.screenShareHeight = height
+                it.screenShareFps = fps
+            }
+        }
+        logger.info { "User $userId screen sharing: $sharing" }
+    }
+
+    fun getScreenSharer(): UserSession? =
+        users.values.find { it.isScreenSharing }
+
     fun size(): Int = users.size
 }

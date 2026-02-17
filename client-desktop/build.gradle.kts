@@ -35,6 +35,9 @@ dependencies {
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation("io.github.oshai:kotlin-logging-jvm:6.0.3")
+
+    // JavaCV for H.264 video encoding/decoding
+    implementation("org.bytedeco:javacv-platform:1.5.10")
 }
 
 kotlin {

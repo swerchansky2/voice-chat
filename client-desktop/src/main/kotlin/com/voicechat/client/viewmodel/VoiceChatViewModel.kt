@@ -3,6 +3,9 @@ package com.voicechat.client.viewmodel
 import com.voicechat.client.network.SignalingClient
 import com.voicechat.client.network.UdpAudioClient
 import com.voicechat.client.audio.AudioEngine
+import com.voicechat.client.screen.ScreenEngine
+import com.voicechat.client.screen.ScreenResolution
+import com.voicechat.client.screen.ScreenShareSettings
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.awt.image.BufferedImage
 
 private val logger = KotlinLogging.logger("VM")
 
@@ -24,7 +28,8 @@ sealed class ConnectionState {
 class VoiceChatViewModel(
     private val signalingClient: SignalingClient,
     private val udpAudioClient: UdpAudioClient,
-    private val audioEngine: AudioEngine
+    private val audioEngine: AudioEngine,
+    private val screenEngine: ScreenEngine
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -39,6 +44,17 @@ class VoiceChatViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _isScreenSharing = MutableStateFlow(false)
+    val isScreenSharing: StateFlow<Boolean> = _isScreenSharing.asStateFlow()
+
+    private val _screenSharerNickname = MutableStateFlow<String?>(null)
+    val screenSharerNickname: StateFlow<String?> = _screenSharerNickname.asStateFlow()
+
+    private val _screenShareSettings = MutableStateFlow(ScreenShareSettings())
+    val screenShareSettings: StateFlow<ScreenShareSettings> = _screenShareSettings.asStateFlow()
+
+    val receivedScreenFrame: StateFlow<BufferedImage?> = screenEngine.receivedFrame
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
@@ -60,6 +76,10 @@ class VoiceChatViewModel(
                         logger.info { "[VM] Disconnected from server" }
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
+                        _isScreenSharing.value = false
+                        _screenSharerNickname.value = null
+                        screenEngine.stopSharing()
+                        screenEngine.stopReceiving()
                         audioEngine.stop()
                         udpAudioClient.stop()
                     }
@@ -68,11 +88,9 @@ class VoiceChatViewModel(
                         currentUserId = event.userId
                         _connectionState.value = ConnectionState.Connected
 
-                        // Start UDP client and register
                         val udpPort = udpAudioClient.start(currentHost!!)
                         signalingClient.registerUdp(udpPort)
 
-                        // Start audio engine
                         audioEngine.start(event.userId)
                     }
                     is SignalingClient.Event.UserList -> {
@@ -91,6 +109,27 @@ class VoiceChatViewModel(
                         logger.error { "[VM] Error: ${event.message}" }
                         _errorMessage.value = event.message
                         _connectionState.value = ConnectionState.Error(event.message)
+                    }
+                    is SignalingClient.Event.ScreenShareStarted -> {
+                        logger.info { "Screen share started by ${event.nickname} (${event.width}x${event.height} @ ${event.fps}fps)" }
+                        _screenSharerNickname.value = event.nickname
+                        if (event.userId == currentUserId) {
+                            _isScreenSharing.value = true
+                        } else {
+                            screenEngine.startReceiving()
+                        }
+                    }
+                    is SignalingClient.Event.ScreenShareStopped -> {
+                        logger.info { "Screen share stopped by ${event.nickname}" }
+                        _screenSharerNickname.value = null
+                        if (event.userId == currentUserId) {
+                            _isScreenSharing.value = false
+                        }
+                        screenEngine.stopReceiving()
+                        screenEngine.clearReceivedFrame()
+                    }
+                    is SignalingClient.Event.ScreenFrameReceived -> {
+                        screenEngine.handleReceivedFrame(event.data)
                     }
                 }
             }
@@ -132,11 +171,19 @@ class VoiceChatViewModel(
     fun disconnect() {
         scope.launch {
             logger.info { "[VM] Disconnecting" }
+            if (_isScreenSharing.value) {
+                signalingClient.stopScreenShare()
+                screenEngine.stopSharing()
+            }
+            screenEngine.stopReceiving()
             signalingClient.disconnect()
             udpAudioClient.stop()
             audioEngine.stop()
+            screenEngine.clearReceivedFrame()
             _connectionState.value = ConnectionState.Disconnected
             _userList.value = emptyList()
+            _isScreenSharing.value = false
+            _screenSharerNickname.value = null
             currentUserId = null
             currentNickname = null
             currentHost = null
@@ -148,6 +195,31 @@ class VoiceChatViewModel(
         _isMuted.value = newMutedState
         audioEngine.setMuted(newMutedState)
         logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
+    }
+
+    fun toggleScreenShare() {
+        scope.launch {
+            if (_isScreenSharing.value) {
+                signalingClient.stopScreenShare()
+                screenEngine.stopSharing()
+                _isScreenSharing.value = false
+            } else {
+                val userId = currentUserId ?: return@launch
+                val settings = _screenShareSettings.value
+                signalingClient.startScreenShare(
+                    settings.resolution.width,
+                    settings.resolution.height,
+                    settings.fps
+                )
+                screenEngine.startSharing(userId, settings)
+                _isScreenSharing.value = true
+            }
+        }
+    }
+
+    fun updateScreenShareSettings(resolution: ScreenResolution) {
+        _screenShareSettings.value = _screenShareSettings.value.copy(resolution = resolution)
+        logger.info { "Screen share resolution updated: ${resolution.label}" }
     }
 
     fun clearError() {

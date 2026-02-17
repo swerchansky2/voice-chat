@@ -14,42 +14,70 @@ import com.voicechat.client.ui.theme.AppColors
 @Composable
 fun ControlPanel(
     isMuted: Boolean,
+    isScreenSharing: Boolean,
+    screenSharerNickname: String?,
     onToggleMute: () -> Unit,
+    onToggleScreenShare: () -> Unit,
     onDisconnect: () -> Unit
 ) {
-    Row(
+    val canToggleScreenShare = screenSharerNickname == null || isScreenSharing
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Button(
-            onClick = onToggleMute,
-            modifier = Modifier
-                .weight(1f)
-                .height(48.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isMuted) AppColors.TextSecondary else AppColors.Accent,
-                contentColor = Color.White
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = if (isMuted) "Unmute" else "Mute",
-                fontSize = 16.sp
-            )
+            Button(
+                onClick = onToggleMute,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isMuted) AppColors.TextSecondary else AppColors.Accent,
+                    contentColor = Color.White
+                )
+            ) {
+                Text(
+                    text = if (isMuted) "Unmute" else "Mute",
+                    fontSize = 14.sp
+                )
+            }
+
+            Button(
+                onClick = onToggleScreenShare,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                enabled = canToggleScreenShare,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isScreenSharing) AppColors.Danger else AppColors.Success,
+                    contentColor = Color.White,
+                    disabledContainerColor = AppColors.TextSecondary
+                )
+            ) {
+                Text(
+                    text = if (isScreenSharing) "Stop Share" else "Share Screen",
+                    fontSize = 14.sp
+                )
+            }
         }
-        
+
         Button(
             onClick = onDisconnect,
             modifier = Modifier
-                .weight(1f)
-                .height(48.dp),
+                .fillMaxWidth()
+                .height(42.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AppColors.Danger,
                 contentColor = Color.White
             )
         ) {
-            Text("Disconnect", fontSize = 16.sp)
+            Text("Disconnect", fontSize = 14.sp)
         }
     }
 }

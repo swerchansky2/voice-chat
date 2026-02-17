@@ -18,7 +18,8 @@ import com.voicechat.client.ui.theme.AppColors
 fun UserListItem(
     nickname: String,
     isCurrentUser: Boolean = false,
-    isMuted: Boolean = false
+    isMuted: Boolean = false,
+    isScreenSharing: Boolean = false
 ) {
     Row(
         modifier = Modifier
@@ -43,14 +44,29 @@ fun UserListItem(
             text = if (isCurrentUser) "$nickname (you)" else nickname,
             color = if (isCurrentUser) AppColors.Accent else AppColors.TextPrimary,
             fontSize = 16.sp,
-            fontWeight = if (isCurrentUser) FontWeight.Bold else FontWeight.Normal
+            fontWeight = if (isCurrentUser) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f)
         )
+        
+        // Screen share indicator
+        if (isScreenSharing) {
+            Text(
+                text = "LIVE",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier
+                    .background(AppColors.Danger, shape = CircleShape)
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+        }
         
         // Muted indicator
         if (isMuted) {
             Text(
-                text = "🔇",
-                fontSize = 16.sp
+                text = "MUTE",
+                fontSize = 11.sp,
+                color = AppColors.TextSecondary
             )
         }
     }

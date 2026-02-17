@@ -47,7 +47,7 @@ fun Application.configureServer() {
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 15.seconds
-        maxFrameSize = 1024 * 1024 // 1MB limit for signaling messages
+        maxFrameSize = 4 * 1024 * 1024 // 4MB for H.264 screen share frames
         masking = false
     }
 

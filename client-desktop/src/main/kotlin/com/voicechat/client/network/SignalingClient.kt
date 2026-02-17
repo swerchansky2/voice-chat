@@ -1,5 +1,6 @@
 package com.voicechat.client.network
 
+import com.voicechat.shared.protocol.ScreenFrame
 import com.voicechat.shared.protocol.SignalMessage
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.client.*
@@ -28,6 +29,7 @@ class SignalingClient {
                 ignoreUnknownKeys = true
                 isLenient = true
             })
+            maxFrameSize = 1024 * 1024
         }
         install(ContentNegotiation) {
             json(Json {
@@ -50,6 +52,9 @@ class SignalingClient {
         data class UserJoined(val nickname: String) : Event()
         data class UserLeft(val nickname: String) : Event()
         data class Error(val message: String) : Event()
+        data class ScreenShareStarted(val userId: String, val nickname: String, val width: Int, val height: Int, val fps: Int) : Event()
+        data class ScreenShareStopped(val userId: String, val nickname: String) : Event()
+        data class ScreenFrameReceived(val data: ByteArray) : Event()
     }
 
     private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
@@ -70,11 +75,9 @@ class SignalingClient {
                 logger.info { "[WS] Connected to server" }
                 _events.emit(Event.Connected)
 
-                // Send join message
                 val joinMessage = SignalMessage.Join(nickname)
                 sendSignalMessage(joinMessage)
 
-                // Listen for messages
                 try {
                     for (frame in incoming) {
                         when (frame) {
@@ -82,6 +85,11 @@ class SignalingClient {
                                 val text = frame.readText()
                                 logger.debug { "[WS] Received: $text" }
                                 handleMessage(text)
+                            }
+                            is Frame.Binary -> {
+                                val data = frame.readBytes()
+                                logger.debug { "Received binary frame: ${data.size} bytes" }
+                                _events.emit(Event.ScreenFrameReceived(data))
                             }
                             else -> {}
                         }
@@ -127,6 +135,12 @@ class SignalingClient {
                     logger.warn { "[WS] Received Error — ${message.message}" }
                     _events.emit(Event.Error(message.message))
                 }
+                is SignalMessage.ScreenShareStarted -> {
+                    _events.emit(Event.ScreenShareStarted(message.userId, message.nickname, message.width, message.height, message.fps))
+                }
+                is SignalMessage.ScreenShareStopped -> {
+                    _events.emit(Event.ScreenShareStopped(message.userId, message.nickname))
+                }
                 else -> {
                     logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
                 }
@@ -140,6 +154,25 @@ class SignalingClient {
         val message = SignalMessage.RegisterUdp(port)
         logger.info { "[WS] Registered UDP port $port with server" }
         session?.sendSignalMessage(message)
+    }
+
+    suspend fun startScreenShare(width: Int, height: Int, fps: Int) {
+        logger.info { "Sending start screen share: ${width}x${height} @ ${fps}fps" }
+        session?.sendSignalMessage(SignalMessage.StartScreenShare(width, height, fps))
+    }
+
+    suspend fun stopScreenShare() {
+        logger.info { "Sending stop screen share" }
+        session?.sendSignalMessage(SignalMessage.StopScreenShare)
+    }
+
+    suspend fun sendScreenFrame(frame: ScreenFrame) {
+        try {
+            val data = frame.toBytes()
+            session?.send(Frame.Binary(true, data))
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to send screen frame" }
+        }
     }
 
     suspend fun disconnect() {
