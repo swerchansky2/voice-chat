@@ -1,22 +1,18 @@
 package com.voicechat.client.audio
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import java.util.concurrent.LinkedBlockingQueue
 import javax.sound.sampled.*
 
 private val logger = KotlinLogging.logger("Playback")
 
 class AudioPlayback {
     private var sourceLine: SourceDataLine? = null
-    private val audioQueue = LinkedBlockingQueue<ByteArray>()
-
-    @Volatile
-    private var isRunning = false
 
     companion object {
         const val SAMPLE_RATE = 48000f
-        const val CHANNELS = 1 // Mono
+        const val CHANNELS = 1
         const val BITS_PER_SAMPLE = 16
+        private const val BUFFER_SIZE_BYTES = 9600 // ~100ms at 48kHz mono 16-bit
     }
 
     fun start() {
@@ -38,51 +34,25 @@ class AudioPlayback {
                 return
             }
 
-            sourceLine = AudioSystem.getLine(info) as SourceDataLine
-            sourceLine?.open(format)
-            sourceLine?.start()
+            sourceLine = (AudioSystem.getLine(info) as SourceDataLine).apply {
+                open(format, BUFFER_SIZE_BYTES)
+                start()
+            }
 
-            isRunning = true
             logger.info { "[Playback] Started — ${SAMPLE_RATE.toInt()}Hz, mono, ${BITS_PER_SAMPLE}-bit" }
-
-            // Start playback thread
-            Thread {
-                playbackLoop()
-            }.start()
         } catch (e: Exception) {
             logger.error(e) { "[Playback] Failed to start audio playback" }
         }
     }
 
     fun stop() {
-        isRunning = false
-        audioQueue.clear()
         sourceLine?.stop()
         sourceLine?.close()
         sourceLine = null
         logger.info { "[Playback] Stopped" }
     }
 
-    fun play(audioData: ByteArray) {
-        if (isRunning && audioQueue.size < 10) { // Prevent queue overflow
-            audioQueue.offer(audioData)
-        }
-    }
-
-    private fun playbackLoop() {
-        while (isRunning) {
-            try {
-                val data = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                if (data != null && sourceLine != null) {
-                    sourceLine?.write(data, 0, data.size)
-                }
-            } catch (e: InterruptedException) {
-                break
-            } catch (e: Exception) {
-                if (isRunning) {
-                    logger.error(e) { "[Playback] Error during playback" }
-                }
-            }
-        }
+    fun playFrame(pcmData: ByteArray) {
+        sourceLine?.write(pcmData, 0, pcmData.size)
     }
 }

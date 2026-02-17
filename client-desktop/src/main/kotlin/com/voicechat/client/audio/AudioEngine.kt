@@ -16,25 +16,28 @@ class AudioEngine(
     private val audioCapture = AudioCapture()
     private val audioPlayback = AudioPlayback()
     private val opusCodec = OpusCodec()
+    private var jitterBuffer: JitterBuffer? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var userId: String? = null
     private var isMuted = false
+    private var sequenceCounter = 0
 
     fun start(userId: String) {
         this.userId = userId
+        sequenceCounter = 0
 
         audioPlayback.start()
+        jitterBuffer = JitterBuffer(opusCodec, audioPlayback)
         audioCapture.start()
 
         // Subscribe to captured audio
         scope.launch {
             audioCapture.audioData.collect { pcmData ->
                 if (!isMuted && userId != null) {
-                    // Encode and send
                     val encodedData = opusCodec.encode(pcmData)
-                    val packet = AudioPacket(userId, encodedData)
+                    val packet = AudioPacket(userId, sequenceCounter++, encodedData)
                     udpAudioClient.sendAudioPacket(packet)
                 }
             }
@@ -45,14 +48,15 @@ class AudioEngine(
 
     fun stop() {
         audioCapture.stop()
+        jitterBuffer?.stop()
+        jitterBuffer = null
         audioPlayback.stop()
         userId = null
         logger.info { "[Audio] Engine stopped" }
     }
 
-    fun playAudio(audioData: ByteArray) {
-        val pcmData = opusCodec.decode(audioData)
-        audioPlayback.play(pcmData)
+    fun receiveAudio(sequenceNumber: Int, audioData: ByteArray) {
+        jitterBuffer?.put(sequenceNumber, audioData)
     }
 
     fun setMuted(muted: Boolean) {

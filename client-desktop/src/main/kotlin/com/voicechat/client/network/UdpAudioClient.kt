@@ -50,7 +50,7 @@ class UdpAudioClient {
     }
 
     private suspend fun receiveLoop() {
-        val buffer = ByteArray(2048) // Large enough for audio packets
+        val buffer = ByteArray(4096)
 
         while (coroutineContext.isActive && socket != null) {
             try {

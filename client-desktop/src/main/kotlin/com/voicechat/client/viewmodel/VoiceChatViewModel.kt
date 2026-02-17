@@ -100,8 +100,7 @@ class VoiceChatViewModel(
     private fun observeAudioPackets() {
         scope.launch {
             udpAudioClient.receivedPackets.collect { packet ->
-                // Play received audio
-                audioEngine.playAudio(packet.audioData)
+                audioEngine.receiveAudio(packet.sequenceNumber, packet.audioData)
             }
         }
     }
