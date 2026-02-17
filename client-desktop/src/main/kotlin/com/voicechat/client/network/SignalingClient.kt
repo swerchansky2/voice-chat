@@ -14,14 +14,14 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.json.Json
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("WS")
 
 class SignalingClient {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
-    
+
     private val client = HttpClient(CIO) {
         install(WebSockets) {
             contentConverter = KotlinxWebsocketSerializationConverter(Json {
@@ -59,43 +59,44 @@ class SignalingClient {
 
     suspend fun connect(host: String, port: Int, nickname: String) {
         try {
-            logger.info { "Connecting to ws://$host:$port/ws/room" }
-            
+            logger.info { "[WS] Connecting to ws://$host:$port/ws/room as \"$nickname\"" }
+
             client.webSocket(
                 host = host,
                 port = port,
                 path = "/ws/room"
             ) {
                 session = this
+                logger.info { "[WS] Connected to server" }
                 _events.emit(Event.Connected)
-                
+
                 // Send join message
                 val joinMessage = SignalMessage.Join(nickname)
-                logger.info { "Sending join message: $joinMessage" }
                 sendSignalMessage(joinMessage)
-                
+
                 // Listen for messages
                 try {
                     for (frame in incoming) {
                         when (frame) {
                             is Frame.Text -> {
                                 val text = frame.readText()
-                                logger.debug { "Received: $text" }
+                                logger.debug { "[WS] Received: $text" }
                                 handleMessage(text)
                             }
                             else -> {}
                         }
                     }
                 } catch (e: Exception) {
-                    logger.error(e) { "Error in message loop" }
+                    logger.error(e) { "[WS] Error in message loop" }
                     _events.emit(Event.Error(e.message ?: "Connection error"))
                 } finally {
+                    logger.info { "[WS] Disconnected from server" }
                     _events.emit(Event.Disconnected)
                     session = null
                 }
             }
         } catch (e: Exception) {
-            logger.error(e) { "Failed to connect" }
+            logger.error(e) { "[WS] Failed to connect to $host:$port" }
             _events.emit(Event.Error(e.message ?: "Connection failed"))
             _events.emit(Event.Disconnected)
         }
@@ -104,45 +105,50 @@ class SignalingClient {
     private suspend fun handleMessage(text: String) {
         try {
             val message = json.decodeFromString<SignalMessage>(text)
-            logger.info { "Parsed message: $message" }
-            
+
             when (message) {
                 is SignalMessage.Joined -> {
+                    logger.info { "[WS] Received Joined — userId=${message.userId}" }
                     _events.emit(Event.Joined(message.userId))
                 }
                 is SignalMessage.UserList -> {
+                    logger.info { "[WS] Received UserList — ${message.users.size} users" }
                     _events.emit(Event.UserList(message.users))
                 }
                 is SignalMessage.UserJoined -> {
+                    logger.info { "[WS] Received UserJoined — \"${message.nickname}\"" }
                     _events.emit(Event.UserJoined(message.nickname))
                 }
                 is SignalMessage.UserLeft -> {
+                    logger.info { "[WS] Received UserLeft — \"${message.nickname}\"" }
                     _events.emit(Event.UserLeft(message.nickname))
                 }
                 is SignalMessage.Error -> {
+                    logger.warn { "[WS] Received Error — ${message.message}" }
                     _events.emit(Event.Error(message.message))
                 }
                 else -> {
-                    logger.warn { "Unhandled message type: $message" }
+                    logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
                 }
             }
         } catch (e: Exception) {
-            logger.error(e) { "Failed to parse message: $text" }
+            logger.error(e) { "[WS] Failed to parse message: $text" }
         }
     }
 
     suspend fun registerUdp(port: Int) {
         val message = SignalMessage.RegisterUdp(port)
-        logger.info { "Registering UDP port: $port" }
+        logger.info { "[WS] Registered UDP port $port with server" }
         session?.sendSignalMessage(message)
     }
 
     suspend fun disconnect() {
         try {
+            logger.info { "[WS] Disconnecting" }
             session?.sendSignalMessage(SignalMessage.Leave)
             session?.close()
         } catch (e: Exception) {
-            logger.error(e) { "Error during disconnect" }
+            logger.error(e) { "[WS] Error during disconnect" }
         } finally {
             session = null
         }

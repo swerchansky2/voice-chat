@@ -8,7 +8,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Relay")
 
 class UdpAudioRelay(
     private val roomManager: RoomManager,
@@ -19,11 +19,11 @@ class UdpAudioRelay(
 
     fun start(scope: CoroutineScope) {
         socket = DatagramSocket(port)
-        logger.info { "UDP Audio Relay started on port $port" }
+        logger.info { "[Relay] UDP Audio Relay listening on port $port" }
 
         relayJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(65535)
-            
+
             while (isActive) {
                 try {
                     val packet = DatagramPacket(buffer, buffer.size)
@@ -33,28 +33,28 @@ class UdpAudioRelay(
                     val audioPacket = AudioPacket.fromBytes(receivedData)
 
                     if (audioPacket == null) {
-                        logger.warn { "Failed to parse audio packet from ${packet.address}:${packet.port}" }
+                        logger.warn { "[Relay] Failed to parse audio packet from ${packet.address}:${packet.port} (${receivedData.size} bytes)" }
                         continue
                     }
 
-                    logger.debug { "Received audio packet from user ${audioPacket.userId}, size: ${audioPacket.audioData.size}" }
+                    logger.debug { "[Relay] Received packet from user ${audioPacket.userId}, size=${audioPacket.audioData.size}" }
 
-                    relayAudioPacket(audioPacket, packet.address.hostAddress, packet.port)
+                    relayAudioPacket(audioPacket)
                 } catch (e: Exception) {
                     if (isActive) {
-                        logger.error(e) { "Error receiving UDP packet" }
+                        logger.error(e) { "[Relay] Error receiving UDP packet" }
                     }
                 }
             }
         }
     }
 
-    private fun relayAudioPacket(audioPacket: AudioPacket, senderHost: String, senderPort: Int) {
+    private fun relayAudioPacket(audioPacket: AudioPacket) {
         val room = roomManager.getRoom(RoomManager.DEFAULT_ROOM_ID) ?: return
         val sender = room.getUser(audioPacket.userId)
 
         if (sender == null) {
-            logger.warn { "Received audio from unknown user: ${audioPacket.userId}" }
+            logger.warn { "[Relay] Audio from unknown user: ${audioPacket.userId}" }
             return
         }
 
@@ -71,19 +71,18 @@ class UdpAudioRelay(
                     )
                     socket?.send(packet)
                     sentCount++
-                    logger.debug { "Relayed audio to user ${user.nickname} at ${user.udpAddress}" }
                 } catch (e: Exception) {
-                    logger.error(e) { "Failed to relay audio to user ${user.nickname}" }
+                    logger.error(e) { "[Relay] Failed to relay audio to user ${user.nickname}" }
                 }
             }
         }
 
-        logger.debug { "Relayed audio packet from ${sender.nickname} to $sentCount users" }
+        logger.debug { "[Relay] Relayed packet from \"${sender.nickname}\" to $sentCount users" }
     }
 
     fun stop() {
         relayJob?.cancel()
         socket?.close()
-        logger.info { "UDP Audio Relay stopped" }
+        logger.info { "[Relay] UDP Audio Relay stopped" }
     }
 }

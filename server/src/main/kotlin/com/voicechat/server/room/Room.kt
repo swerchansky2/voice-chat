@@ -7,7 +7,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Room")
 
 class Room(val roomId: String) {
     private val users = ConcurrentHashMap<String, UserSession>()
@@ -20,9 +20,9 @@ class Room(val roomId: String) {
             // Nickname already taken
             return false
         }
-        
+
         users[session.userId] = session
-        logger.info { "User ${session.nickname} (${session.userId}) joined room $roomId" }
+        logger.info { "[Room] User \"${session.nickname}\" (${session.userId}) joined room \"$roomId\" [${users.size} user${if (users.size != 1) "s" else ""}]" }
         return true
     }
 
@@ -30,7 +30,7 @@ class Room(val roomId: String) {
         val session = users.remove(userId)
         session?.let {
             nicknames.remove(it.nickname)
-            logger.info { "User ${it.nickname} ($userId) left room $roomId" }
+            logger.info { "[Room] User \"${it.nickname}\" ($userId) left room \"$roomId\" [${users.size} user${if (users.size != 1) "s" else ""}]" }
         }
         return session
     }
@@ -50,7 +50,7 @@ class Room(val roomId: String) {
                 try {
                     user.websocketSession.send(Frame.Text(json))
                 } catch (e: Exception) {
-                    logger.error(e) { "Failed to send message to user ${user.nickname}" }
+                    logger.error(e) { "[Room] Failed to broadcast ${message::class.simpleName} to \"${user.nickname}\"" }
                 }
             }
     }
@@ -61,13 +61,14 @@ class Room(val roomId: String) {
             val json = Json.encodeToString(message)
             user.websocketSession.send(Frame.Text(json))
         } catch (e: Exception) {
-            logger.error(e) { "Failed to send message to user ${user.nickname}" }
+            logger.error(e) { "[Room] Failed to send ${message::class.simpleName} to \"${user.nickname}\"" }
         }
     }
 
     fun updateUdpAddress(userId: String, address: java.net.InetSocketAddress) {
-        users[userId]?.udpAddress = address
-        logger.info { "Updated UDP address for user $userId: $address" }
+        val user = users[userId]
+        user?.udpAddress = address
+        logger.info { "[Room] Updated UDP address for \"${user?.nickname ?: userId}\": $address" }
     }
 
     fun size(): Int = users.size

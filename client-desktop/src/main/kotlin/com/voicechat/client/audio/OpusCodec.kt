@@ -2,7 +2,7 @@ package com.voicechat.client.audio
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Codec")
 
 /**
  * Opus codec wrapper.
@@ -10,16 +10,16 @@ private val logger = KotlinLogging.logger {}
  * Currently using PCM passthrough as fallback.
  */
 class OpusCodec {
-    
+
     companion object {
         const val SAMPLE_RATE = 48000
         const val CHANNELS = 1
         const val FRAME_SIZE = 960
         const val BITRATE = 64000
     }
-    
+
     init {
-        logger.warn { "OpusCodec: Using PCM passthrough (Opus not available)" }
+        logger.warn { "[Codec] Using PCM passthrough (Opus not available)" }
     }
 
     /**

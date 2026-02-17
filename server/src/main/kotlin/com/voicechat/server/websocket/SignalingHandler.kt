@@ -12,38 +12,43 @@ import kotlinx.serialization.encodeToString
 import java.net.InetSocketAddress
 import java.util.*
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("WS")
 
 class SignalingHandler(private val roomManager: RoomManager) {
 
     fun Route.signalingWebSocket() {
         webSocket("/ws/room") {
             var currentUserId: String? = null
+            var currentNickname: String? = null
             var currentRoomId = RoomManager.DEFAULT_ROOM_ID
+
+            val remoteAddress = call.request.local.remoteAddress
+            logger.info { "[WS] New connection from $remoteAddress" }
 
             try {
                 for (frame in incoming) {
                     if (frame !is Frame.Text) continue
 
                     val text = frame.readText()
-                    logger.debug { "Received message: $text" }
+                    logger.debug { "[WS] Received: $text" }
 
                     try {
                         val message = Json.decodeFromString<SignalMessage>(text)
-                        handleMessage(message, currentUserId, currentRoomId) { userId, roomId ->
+                        handleMessage(message, currentUserId, currentNickname, currentRoomId) { userId, nickname, roomId ->
                             currentUserId = userId
+                            currentNickname = nickname
                             currentRoomId = roomId
                         }
                     } catch (e: Exception) {
-                        logger.error(e) { "Failed to parse message: $text" }
+                        logger.error(e) { "[WS] Failed to parse message from ${currentNickname ?: remoteAddress}" }
                         sendMessage(SignalMessage.Error("Invalid message format"))
                     }
                 }
             } catch (e: Exception) {
-                logger.error(e) { "WebSocket error" }
+                logger.error(e) { "[WS] Connection error for ${currentNickname ?: remoteAddress}" }
             } finally {
                 currentUserId?.let { userId ->
-                    handleDisconnect(userId, currentRoomId)
+                    handleDisconnect(userId, currentNickname, currentRoomId)
                 }
             }
         }
@@ -52,8 +57,9 @@ class SignalingHandler(private val roomManager: RoomManager) {
     private suspend fun DefaultWebSocketServerSession.handleMessage(
         message: SignalMessage,
         currentUserId: String?,
+        currentNickname: String?,
         roomId: String,
-        updateSession: (String?, String) -> Unit
+        updateSession: (String?, String?, String) -> Unit
     ) {
         when (message) {
             is SignalMessage.Join -> {
@@ -75,16 +81,14 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                updateSession(userId, roomId)
+                updateSession(userId, message.nickname, roomId)
 
                 sendMessage(SignalMessage.Joined(userId))
-                
+
                 val userList = room.getAllUsers().map { it.nickname }
                 sendMessage(SignalMessage.UserList(userList))
-                
+
                 room.broadcast(SignalMessage.UserJoined(message.nickname), excludeUserId = userId)
-                
-                logger.info { "User ${message.nickname} joined as $userId" }
             }
 
             is SignalMessage.Leave -> {
@@ -93,8 +97,8 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                handleDisconnect(currentUserId, roomId)
-                updateSession(null, roomId)
+                handleDisconnect(currentUserId, currentNickname, roomId)
+                updateSession(null, null, roomId)
             }
 
             is SignalMessage.RegisterUdp -> {
@@ -112,24 +116,24 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 val clientAddress = call.request.local.remoteAddress
                 val udpAddress = InetSocketAddress(clientAddress, message.port)
                 room.updateUdpAddress(currentUserId, udpAddress)
-                
-                logger.info { "User $currentUserId registered UDP address: $udpAddress" }
+
+                logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
             }
 
             else -> {
-                logger.warn { "Received unexpected message type: ${message::class.simpleName}" }
+                logger.warn { "[WS] Unexpected message type: ${message::class.simpleName} from ${currentNickname ?: "unknown"}" }
             }
         }
     }
 
-    private suspend fun DefaultWebSocketServerSession.handleDisconnect(userId: String, roomId: String) {
+    private suspend fun DefaultWebSocketServerSession.handleDisconnect(userId: String, nickname: String?, roomId: String) {
         val room = roomManager.getRoom(roomId) ?: return
         val userSession = room.removeUser(userId)
-        
+
         userSession?.let {
             room.broadcast(SignalMessage.UserLeft(it.nickname))
             roomManager.removeRoomIfEmpty(roomId)
-            logger.info { "User ${it.nickname} ($userId) disconnected" }
+            logger.info { "[WS] User \"${it.nickname}\" ($userId) disconnected" }
         }
     }
 

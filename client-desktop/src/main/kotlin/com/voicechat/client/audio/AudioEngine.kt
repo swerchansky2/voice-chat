@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Audio")
 
 class AudioEngine(
     private val udpAudioClient: UdpAudioClient
@@ -16,18 +16,18 @@ class AudioEngine(
     private val audioCapture = AudioCapture()
     private val audioPlayback = AudioPlayback()
     private val opusCodec = OpusCodec()
-    
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    
+
     private var userId: String? = null
     private var isMuted = false
 
     fun start(userId: String) {
         this.userId = userId
-        
+
         audioPlayback.start()
         audioCapture.start()
-        
+
         // Subscribe to captured audio
         scope.launch {
             audioCapture.audioData.collect { pcmData ->
@@ -39,15 +39,15 @@ class AudioEngine(
                 }
             }
         }
-        
-        logger.info { "AudioEngine started for user: $userId" }
+
+        logger.info { "[Audio] Engine started for user $userId" }
     }
 
     fun stop() {
         audioCapture.stop()
         audioPlayback.stop()
         userId = null
-        logger.info { "AudioEngine stopped" }
+        logger.info { "[Audio] Engine stopped" }
     }
 
     fun playAudio(audioData: ByteArray) {
@@ -57,6 +57,5 @@ class AudioEngine(
 
     fun setMuted(muted: Boolean) {
         isMuted = muted
-        logger.info { "Muted: $muted" }
     }
 }

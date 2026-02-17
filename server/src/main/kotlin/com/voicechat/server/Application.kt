@@ -18,7 +18,7 @@ import org.koin.ktor.ext.inject
 import org.koin.ktor.plugin.Koin
 import kotlin.time.Duration.Companion.seconds
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Server")
 
 fun main() {
     val httpPort = System.getenv("HTTP_PORT")?.toIntOrNull() ?: 8080
@@ -28,9 +28,11 @@ fun main() {
     require(httpPort in 1..65535) { "HTTP_PORT must be in range 1-65535, got $httpPort" }
     require(udpPort in 1..65535) { "UDP_PORT must be in range 1-65535, got $udpPort" }
 
-    logger.info { "Starting Voice Chat Server..." }
-    logger.info { "HTTP/WebSocket port: $httpPort" }
-    logger.info { "UDP port: $udpPort" }
+    logger.info { "[Server] ========================================" }
+    logger.info { "[Server] Voice Chat Server starting" }
+    logger.info { "[Server]   WebSocket: 0.0.0.0:$httpPort" }
+    logger.info { "[Server]   UDP Relay: 0.0.0.0:$udpPort" }
+    logger.info { "[Server] ========================================" }
 
     embeddedServer(Netty, port = httpPort, host = "0.0.0.0") {
         configureServer()
@@ -66,9 +68,9 @@ fun Application.configureServer() {
     }
 
     monitor.subscribe(ApplicationStopped) {
-        logger.info { "Stopping Voice Chat Server..." }
+        logger.info { "[Server] Shutting down" }
         udpAudioRelay.stop()
     }
 
-    logger.info { "Voice Chat Server started successfully" }
+    logger.info { "[Server] Voice Chat Server ready" }
 }

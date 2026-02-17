@@ -4,12 +4,12 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.LinkedBlockingQueue
 import javax.sound.sampled.*
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Playback")
 
 class AudioPlayback {
     private var sourceLine: SourceDataLine? = null
     private val audioQueue = LinkedBlockingQueue<ByteArray>()
-    
+
     @Volatile
     private var isRunning = false
 
@@ -21,7 +21,7 @@ class AudioPlayback {
 
     fun start() {
         stop()
-        
+
         try {
             val format = AudioFormat(
                 SAMPLE_RATE,
@@ -30,27 +30,27 @@ class AudioPlayback {
                 true, // signed
                 false // little endian
             )
-            
+
             val info = DataLine.Info(SourceDataLine::class.java, format)
-            
+
             if (!AudioSystem.isLineSupported(info)) {
-                logger.error { "Speaker line not supported" }
+                logger.error { "[Playback] Speaker line not supported" }
                 return
             }
-            
+
             sourceLine = AudioSystem.getLine(info) as SourceDataLine
             sourceLine?.open(format)
             sourceLine?.start()
-            
+
             isRunning = true
-            logger.info { "Audio playback started" }
-            
+            logger.info { "[Playback] Started — ${SAMPLE_RATE.toInt()}Hz, mono, ${BITS_PER_SAMPLE}-bit" }
+
             // Start playback thread
             Thread {
                 playbackLoop()
             }.start()
         } catch (e: Exception) {
-            logger.error(e) { "Failed to start audio playback" }
+            logger.error(e) { "[Playback] Failed to start audio playback" }
         }
     }
 
@@ -60,7 +60,7 @@ class AudioPlayback {
         sourceLine?.stop()
         sourceLine?.close()
         sourceLine = null
-        logger.info { "Audio playback stopped" }
+        logger.info { "[Playback] Stopped" }
     }
 
     fun play(audioData: ByteArray) {
@@ -80,7 +80,7 @@ class AudioPlayback {
                 break
             } catch (e: Exception) {
                 if (isRunning) {
-                    logger.error(e) { "Error during playback" }
+                    logger.error(e) { "[Playback] Error during playback" }
                 }
             }
         }

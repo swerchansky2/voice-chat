@@ -11,7 +11,7 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import kotlin.coroutines.coroutineContext
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("UDP")
 
 class UdpAudioClient {
     private var socket: DatagramSocket? = null
@@ -31,7 +31,7 @@ class UdpAudioClient {
         socket = DatagramSocket()
         val localPort = socket!!.localPort
 
-        logger.info { "UDP client started on port $localPort, server: $serverHost:$serverUdpPort" }
+        logger.info { "[UDP] Started on local port $localPort, target server $serverHost:$serverUdpPort" }
 
         // Start receiving
         receiveJob = CoroutineScope(Dispatchers.IO).launch {
@@ -46,12 +46,12 @@ class UdpAudioClient {
         receiveJob = null
         socket?.close()
         socket = null
-        logger.info { "UDP client stopped" }
+        logger.info { "[UDP] Stopped" }
     }
 
     private suspend fun receiveLoop() {
         val buffer = ByteArray(2048) // Large enough for audio packets
-        
+
         while (coroutineContext.isActive && socket != null) {
             try {
                 val packet = DatagramPacket(buffer, buffer.size)
@@ -59,15 +59,16 @@ class UdpAudioClient {
 
                 val data = packet.data.copyOfRange(0, packet.length)
                 val audioPacket = AudioPacket.fromBytes(data)
-                
+
                 if (audioPacket != null) {
+                    logger.debug { "[UDP] Received packet from user ${audioPacket.userId}, size=${data.size}" }
                     _receivedPackets.emit(audioPacket)
                 } else {
-                    logger.warn { "Failed to parse audio packet" }
+                    logger.warn { "[UDP] Failed to parse audio packet (${data.size} bytes)" }
                 }
             } catch (e: Exception) {
                 if (coroutineContext.isActive) {
-                    logger.error(e) { "Error receiving UDP packet" }
+                    logger.error(e) { "[UDP] Error receiving packet" }
                 }
             }
         }
@@ -81,7 +82,7 @@ class UdpAudioClient {
             val datagramPacket = DatagramPacket(data, data.size, serverAddress, serverPort)
             socket.send(datagramPacket)
         } catch (e: Exception) {
-            logger.error(e) { "Failed to send audio packet" }
+            logger.error(e) { "[UDP] Failed to send audio packet (${packet.audioData.size} bytes)" }
         }
     }
 }

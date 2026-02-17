@@ -3,18 +3,18 @@ package com.voicechat.server.room
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("Room")
 
 class RoomManager {
     private val rooms = ConcurrentHashMap<String, Room>()
-    
+
     companion object {
         const val DEFAULT_ROOM_ID = "main"
     }
 
     fun getOrCreateRoom(roomId: String = DEFAULT_ROOM_ID): Room {
         return rooms.getOrPut(roomId) {
-            logger.info { "Creating new room: $roomId" }
+            logger.info { "[Room] Created room \"$roomId\"" }
             Room(roomId)
         }
     }
@@ -25,7 +25,7 @@ class RoomManager {
         rooms[roomId]?.let { room ->
             if (room.size() == 0) {
                 rooms.remove(roomId)
-                logger.info { "Removed empty room: $roomId" }
+                logger.info { "[Room] Removed empty room \"$roomId\"" }
             }
         }
     }

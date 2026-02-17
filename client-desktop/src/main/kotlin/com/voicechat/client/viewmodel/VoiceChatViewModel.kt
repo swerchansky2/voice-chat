@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-private val logger = KotlinLogging.logger {}
+private val logger = KotlinLogging.logger("VM")
 
 sealed class ConnectionState {
     data object Disconnected : ConnectionState()
@@ -54,41 +54,41 @@ class VoiceChatViewModel(
             signalingClient.events.collect { event ->
                 when (event) {
                     is SignalingClient.Event.Connected -> {
-                        logger.info { "WebSocket connected" }
+                        // Connection established, waiting for Joined
                     }
                     is SignalingClient.Event.Disconnected -> {
-                        logger.info { "WebSocket disconnected" }
+                        logger.info { "[VM] Disconnected from server" }
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
                         audioEngine.stop()
                         udpAudioClient.stop()
                     }
                     is SignalingClient.Event.Joined -> {
-                        logger.info { "Joined with userId: ${event.userId}" }
+                        logger.info { "[VM] Joined room — userId=${event.userId}, nickname=$currentNickname" }
                         currentUserId = event.userId
                         _connectionState.value = ConnectionState.Connected
-                        
+
                         // Start UDP client and register
                         val udpPort = udpAudioClient.start(currentHost!!)
                         signalingClient.registerUdp(udpPort)
-                        
+
                         // Start audio engine
                         audioEngine.start(event.userId)
                     }
                     is SignalingClient.Event.UserList -> {
-                        logger.info { "User list updated: ${event.users}" }
+                        logger.info { "[VM] User list: ${event.users}" }
                         _userList.value = event.users
                     }
                     is SignalingClient.Event.UserJoined -> {
-                        logger.info { "User joined: ${event.nickname}" }
+                        logger.info { "[VM] User joined: \"${event.nickname}\"" }
                         _userList.value = _userList.value + event.nickname
                     }
                     is SignalingClient.Event.UserLeft -> {
-                        logger.info { "User left: ${event.nickname}" }
+                        logger.info { "[VM] User left: \"${event.nickname}\"" }
                         _userList.value = _userList.value - event.nickname
                     }
                     is SignalingClient.Event.Error -> {
-                        logger.error { "Signaling error: ${event.message}" }
+                        logger.error { "[VM] Error: ${event.message}" }
                         _errorMessage.value = event.message
                         _connectionState.value = ConnectionState.Error(event.message)
                     }
@@ -107,7 +107,7 @@ class VoiceChatViewModel(
     }
 
     fun connect(nickname: String, host: String, port: Int) {
-        if (_connectionState.value is ConnectionState.Connecting || 
+        if (_connectionState.value is ConnectionState.Connecting ||
             _connectionState.value is ConnectionState.Connected) {
             return
         }
@@ -117,11 +117,13 @@ class VoiceChatViewModel(
         _connectionState.value = ConnectionState.Connecting
         _errorMessage.value = null
 
+        logger.info { "[VM] Connecting as \"$nickname\" to $host:$port" }
+
         scope.launch {
             try {
                 signalingClient.connect(host, port, nickname)
             } catch (e: Exception) {
-                logger.error(e) { "Failed to connect" }
+                logger.error(e) { "[VM] Failed to connect to $host:$port" }
                 _errorMessage.value = e.message ?: "Connection failed"
                 _connectionState.value = ConnectionState.Error(e.message ?: "Connection failed")
             }
@@ -130,6 +132,7 @@ class VoiceChatViewModel(
 
     fun disconnect() {
         scope.launch {
+            logger.info { "[VM] Disconnecting" }
             signalingClient.disconnect()
             udpAudioClient.stop()
             audioEngine.stop()
@@ -145,7 +148,7 @@ class VoiceChatViewModel(
         val newMutedState = !_isMuted.value
         _isMuted.value = newMutedState
         audioEngine.setMuted(newMutedState)
-        logger.info { "Mute toggled to: $newMutedState" }
+        logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
     }
 
     fun clearError() {
