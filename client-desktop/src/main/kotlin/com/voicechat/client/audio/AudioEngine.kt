@@ -36,9 +36,15 @@ class AudioEngine(
         scope.launch {
             audioCapture.audioData.collect { pcmData ->
                 if (!isMuted && userId != null) {
-                    val encodedData = opusCodec.encode(pcmData)
-                    val packet = AudioPacket(userId, sequenceCounter++, encodedData)
-                    udpAudioClient.sendAudioPacket(packet)
+                    try {
+                        val encodedData = opusCodec.encode(pcmData)
+                        if (encodedData.isNotEmpty()) {
+                            val packet = AudioPacket(userId, sequenceCounter++, encodedData)
+                            udpAudioClient.sendAudioPacket(packet)
+                        }
+                    } catch (e: Exception) {
+                        logger.error(e) { "[Audio] Encode error" }
+                    }
                 }
             }
         }

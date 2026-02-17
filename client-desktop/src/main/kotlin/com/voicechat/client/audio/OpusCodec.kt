@@ -4,7 +4,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.jaredmdobson.OpusApplication
 import io.github.jaredmdobson.OpusDecoder
 import io.github.jaredmdobson.OpusEncoder
-import io.github.jaredmdobson.OpusSignal
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -18,11 +17,12 @@ class OpusCodec {
         const val FRAME_SIZE = 960 // 20ms at 48kHz
         const val BITRATE = 32000
         private const val MAX_OPUS_PACKET_SIZE = 1275
+        private const val EXPECTED_PCM_BYTES = FRAME_SIZE * CHANNELS * 2 // 1920
     }
 
-    private val encoder = OpusEncoder(SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_VOIP).apply {
+    private val encoder = OpusEncoder(SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_AUDIO).apply {
         setBitrate(BITRATE)
-        setSignalType(OpusSignal.OPUS_SIGNAL_VOICE)
+        setComplexity(5)
     }
 
     private val decoder = OpusDecoder(SAMPLE_RATE, CHANNELS)
@@ -32,6 +32,10 @@ class OpusCodec {
     }
 
     fun encode(pcmBytes: ByteArray): ByteArray {
+        if (pcmBytes.size != EXPECTED_PCM_BYTES) {
+            logger.warn { "[Codec] Unexpected PCM size: ${pcmBytes.size}, expected $EXPECTED_PCM_BYTES" }
+            return ByteArray(0)
+        }
         val pcmShorts = bytesToShorts(pcmBytes)
         val outputBuffer = ByteArray(MAX_OPUS_PACKET_SIZE)
         val bytesEncoded = encoder.encode(pcmShorts, 0, FRAME_SIZE, outputBuffer, 0, MAX_OPUS_PACKET_SIZE)
