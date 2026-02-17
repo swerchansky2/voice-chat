@@ -10,9 +10,10 @@ class JitterBuffer(
     private val playback: AudioPlayback
 ) {
     companion object {
-        private const val BUFFER_DEPTH = 3 // frames to buffer before starting playback
+        private const val BUFFER_DEPTH = 5 // frames to buffer before starting playback (~100ms)
         private const val MAX_BUFFER_SIZE = 50
-        private const val MAX_PLC_RUN = 3 // max consecutive PLC frames before waiting for data
+        private const val MAX_PLC_RUN = 5 // max consecutive PLC frames before waiting for data
+        private const val DRIFT_WINDOW = 100 // frames (~2s) for clock drift averaging
     }
 
     private val lock = Object()
@@ -22,6 +23,10 @@ class JitterBuffer(
     @Volatile
     private var running = false
     private var playbackThread: Thread? = null
+
+    // Clock drift compensation state
+    private var driftSampleCount = 0
+    private var driftFullnessSum = 0L
 
     fun put(sequenceNumber: Int, opusData: ByteArray) {
         synchronized(lock) {
@@ -68,6 +73,7 @@ class JitterBuffer(
         while (running) {
             try {
                 val opusData: ByteArray?
+                var skipFrame = false
 
                 synchronized(lock) {
                     // If buffer is empty, wait for new data instead of spinning PLC
@@ -75,6 +81,20 @@ class JitterBuffer(
                         lock.wait(100)
                     }
                     if (!running) return
+
+                    // Clock drift compensation: track average buffer fullness
+                    driftSampleCount++
+                    driftFullnessSum += buffer.size
+                    if (driftSampleCount >= DRIFT_WINDOW) {
+                        val avgFullness = driftFullnessSum.toDouble() / driftSampleCount
+                        driftSampleCount = 0
+                        driftFullnessSum = 0L
+                        // If buffer is consistently growing, sender is faster — skip one frame to drain
+                        if (avgFullness > BUFFER_DEPTH + 2) {
+                            logger.debug { "[Jitter] Drift correction: skipping frame (avg fullness=${"%.1f".format(avgFullness)})" }
+                            skipFrame = true
+                        }
+                    }
 
                     // If we've fallen too far behind, resync to current buffer position
                     if (buffer.isNotEmpty() && nextExpectedSeq < buffer.firstKey() - BUFFER_DEPTH) {
@@ -84,6 +104,16 @@ class JitterBuffer(
 
                     opusData = buffer.remove(nextExpectedSeq)
                     nextExpectedSeq++
+
+                    // If skipping for drift correction, consume one extra frame
+                    if (skipFrame && buffer.containsKey(nextExpectedSeq)) {
+                        val skipData = buffer.remove(nextExpectedSeq)
+                        nextExpectedSeq++
+                        // Decode the skipped frame to keep codec state consistent, but don't play it
+                        if (skipData != null) {
+                            codec.decode(skipData)
+                        }
+                    }
                 }
 
                 if (opusData != null) {
@@ -122,6 +152,8 @@ class JitterBuffer(
             buffer.clear()
             started = false
             nextExpectedSeq = -1
+            driftSampleCount = 0
+            driftFullnessSum = 0L
         }
         logger.info { "[Jitter] Stopped" }
     }
