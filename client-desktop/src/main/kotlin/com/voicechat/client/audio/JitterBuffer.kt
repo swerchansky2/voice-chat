@@ -12,6 +12,7 @@ class JitterBuffer(
     companion object {
         private const val BUFFER_DEPTH = 3 // frames to buffer before starting playback
         private const val MAX_BUFFER_SIZE = 50
+        private const val MAX_PLC_RUN = 3 // max consecutive PLC frames before waiting for data
     }
 
     private val lock = Object()
@@ -37,8 +38,9 @@ class JitterBuffer(
             if (!started && buffer.size >= BUFFER_DEPTH) {
                 started = true
                 nextExpectedSeq = buffer.firstKey()
-                lock.notifyAll()
             }
+
+            lock.notifyAll()
         }
     }
 
@@ -61,23 +63,46 @@ class JitterBuffer(
             }
         }
 
+        var plcCount = 0
+
         while (running) {
             try {
-                val opusData = synchronized(lock) {
-                    val data = buffer.remove(nextExpectedSeq)
+                val opusData: ByteArray?
+
+                synchronized(lock) {
+                    // If buffer is empty, wait for new data instead of spinning PLC
+                    while (running && buffer.isEmpty()) {
+                        lock.wait(100)
+                    }
+                    if (!running) return
+
+                    // If we've fallen too far behind, resync to current buffer position
+                    if (buffer.isNotEmpty() && nextExpectedSeq < buffer.firstKey() - BUFFER_DEPTH) {
+                        logger.debug { "[Jitter] Resync: $nextExpectedSeq -> ${buffer.firstKey()}" }
+                        nextExpectedSeq = buffer.firstKey()
+                    }
+
+                    opusData = buffer.remove(nextExpectedSeq)
                     nextExpectedSeq++
-                    data
                 }
 
-                val pcm = if (opusData != null) {
-                    codec.decode(opusData)
+                if (opusData != null) {
+                    plcCount = 0
+                    playback.playFrame(codec.decode(opusData))
                 } else {
-                    codec.decodePLC()
+                    plcCount++
+                    if (plcCount <= MAX_PLC_RUN) {
+                        // Fill short gaps with PLC
+                        playback.playFrame(codec.decodePLC())
+                    } else {
+                        // Too many consecutive missing frames — pause and wait for data
+                        synchronized(lock) {
+                            lock.wait(20)
+                        }
+                    }
                 }
-
-                // SourceDataLine.write() blocks when its buffer is full,
-                // naturally providing 20ms frame pacing from the audio hardware clock
-                playback.playFrame(pcm)
+            } catch (e: InterruptedException) {
+                break
             } catch (e: Exception) {
                 if (running) {
                     logger.error(e) { "[Jitter] Error in playback" }
@@ -88,6 +113,9 @@ class JitterBuffer(
 
     fun stop() {
         running = false
+        synchronized(lock) {
+            lock.notifyAll()
+        }
         playbackThread?.interrupt()
         playbackThread = null
         synchronized(lock) {
