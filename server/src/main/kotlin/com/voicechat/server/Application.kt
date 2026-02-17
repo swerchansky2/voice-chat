@@ -16,7 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.koin.ktor.ext.inject
 import org.koin.ktor.plugin.Koin
-import java.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -39,8 +39,8 @@ fun Application.configureServer() {
     }
 
     install(WebSockets) {
-        pingPeriod = Duration.ofSeconds(15)
-        timeout = Duration.ofSeconds(15)
+        pingPeriod = 15.seconds
+        timeout = 15.seconds
         maxFrameSize = Long.MAX_VALUE
         masking = false
     }
@@ -61,7 +61,7 @@ fun Application.configureServer() {
         }
     }
 
-    environment.monitor.subscribe(ApplicationStopping) {
+    monitor.subscribe(ApplicationStopped) {
         logger.info { "Stopping Voice Chat Server..." }
         udpAudioRelay.stop()
     }
