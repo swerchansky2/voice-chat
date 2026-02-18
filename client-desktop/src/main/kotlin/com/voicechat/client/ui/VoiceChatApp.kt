@@ -1,5 +1,7 @@
 package com.voicechat.client.ui
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import com.voicechat.client.ui.screen.ConnectScreen
 import com.voicechat.client.ui.screen.RoomScreen
@@ -18,10 +20,9 @@ fun VoiceChatApp() {
     val viewModel: VoiceChatViewModel by inject(VoiceChatViewModel::class.java)
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Connect) }
     var currentNickname by remember { mutableStateOf("") }
-    
+
     val connectionState by viewModel.connectionState.collectAsState()
-    
-    // Auto-navigate to room when connected
+
     LaunchedEffect(connectionState) {
         if (connectionState is ConnectionState.Connected && currentScreen is Screen.Connect) {
             currentScreen = Screen.Room(currentNickname)
@@ -31,25 +32,25 @@ fun VoiceChatApp() {
     }
 
     AppTheme {
-        when (val screen = currentScreen) {
-            is Screen.Connect -> {
-                ConnectScreen(
+        AnimatedContent(
+            targetState = currentScreen,
+            transitionSpec = {
+                (fadeIn(tween(280)) + slideInVertically(tween(280)) { it / 24 }) togetherWith
+                (fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it / 24 })
+            },
+            label = "screenTransition"
+        ) { screen ->
+            when (screen) {
+                is Screen.Connect -> ConnectScreen(
                     viewModel = viewModel,
-                    onConnected = { nickname ->
-                        currentNickname = nickname
-                    }
+                    onConnected = { nickname -> currentNickname = nickname }
                 )
-            }
-            is Screen.Room -> {
-                RoomScreen(
+                is Screen.Room -> RoomScreen(
                     viewModel = viewModel,
                     currentNickname = screen.nickname,
-                    onDisconnected = {
-                        currentScreen = Screen.Connect
-                    }
+                    onDisconnected = { currentScreen = Screen.Connect }
                 )
             }
         }
     }
 }
-

@@ -1,12 +1,22 @@
 package com.voicechat.client.ui.component
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.voicechat.client.ui.theme.AppColors
@@ -25,59 +35,120 @@ fun ControlPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(
-                onClick = onToggleMute,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isMuted) AppColors.TextSecondary else AppColors.Accent,
-                    contentColor = Color.White
-                )
-            ) {
-                Text(
-                    text = if (isMuted) "Unmute" else "Mute",
-                    fontSize = 14.sp
-                )
-            }
+            // Mute button
+            val muteGradient by animateGradientAsState(
+                target = if (isMuted)
+                    listOf(AppColors.Surface3, AppColors.Surface3)
+                else
+                    listOf(AppColors.AccentLight, AppColors.Accent)
+            )
+            GradientActionButton(
+                label = if (isMuted) "Unmute" else "Mute",
+                gradient = muteGradient,
+                modifier = Modifier.weight(1f),
+                onClick = onToggleMute
+            )
 
-            Button(
-                onClick = onToggleScreenShare,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
+            // Screen share button
+            val shareGradient by animateGradientAsState(
+                target = when {
+                    !canToggleScreenShare -> listOf(AppColors.TextMuted, AppColors.TextMuted)
+                    isScreenSharing       -> listOf(Color(0xFFF43F5E), Color(0xFFDC2626))
+                    else                  -> listOf(Color(0xFF10B981), Color(0xFF059669))
+                }
+            )
+            GradientActionButton(
+                label = if (isScreenSharing) "Stop Share" else "Share Screen",
+                gradient = shareGradient,
+                modifier = Modifier.weight(1f),
                 enabled = canToggleScreenShare,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isScreenSharing) AppColors.Danger else AppColors.Success,
-                    contentColor = Color.White,
-                    disabledContainerColor = AppColors.TextSecondary
-                )
-            ) {
-                Text(
-                    text = if (isScreenSharing) "Stop Share" else "Share Screen",
-                    fontSize = 14.sp
-                )
-            }
+                onClick = onToggleScreenShare
+            )
         }
 
-        Button(
-            onClick = onDisconnect,
+        // Disconnect — subtle outlined style
+        val disconnectInteraction = remember { MutableInteractionSource() }
+        val isPressed by disconnectInteraction.collectIsPressedAsState()
+        val disconnectScale by animateFloatAsState(
+            targetValue = if (isPressed) 0.97f else 1f,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "disconnectScale"
+        )
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(42.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = AppColors.Danger,
-                contentColor = Color.White
-            )
+                .height(38.dp)
+                .graphicsLayer { scaleX = disconnectScale; scaleY = disconnectScale }
+                .clip(RoundedCornerShape(10.dp))
+                .background(AppColors.DangerDim)
+                .clickable(
+                    interactionSource = disconnectInteraction,
+                    indication = null
+                ) { onDisconnect() },
+            contentAlignment = Alignment.Center
         ) {
-            Text("Disconnect", fontSize = 14.sp)
+            Text(
+                text = "Disconnect",
+                color = AppColors.Danger,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
+}
+
+@Composable
+private fun GradientActionButton(
+    label: String,
+    gradient: List<Color>,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "actionBtnScale"
+    )
+
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(10.dp))
+            .background(Brush.horizontalGradient(gradient))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled
+            ) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) Color.White else AppColors.TextMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+/**
+ * Animates between two gradient color lists by independently animating each color stop.
+ * Returns a State<List<Color>> so Compose recompositions are efficient.
+ */
+@Composable
+private fun animateGradientAsState(target: List<Color>): State<List<Color>> {
+    val c0 by animateColorAsState(target[0], tween(250), label = "g0")
+    val c1 by animateColorAsState(target[1], tween(250), label = "g1")
+    return remember { derivedStateOf { listOf(c0, c1) } }
 }

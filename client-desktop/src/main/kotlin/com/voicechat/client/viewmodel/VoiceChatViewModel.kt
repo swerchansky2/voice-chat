@@ -237,7 +237,7 @@ class VoiceChatViewModel(
                 signalingClient.startScreenShare(
                     settings.resolution.width,
                     settings.resolution.height,
-                    minOf(settings.fps, settings.resolution.maxFps)
+                    settings.fps
                 )
                 try {
                     screenEngine.startSharing(userId, settings)
