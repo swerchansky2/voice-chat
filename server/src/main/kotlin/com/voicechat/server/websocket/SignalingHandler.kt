@@ -29,7 +29,6 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 for (frame in incoming) {
                     when (frame) {
                         is Frame.Text -> {
-
                             val text = frame.readText()
                             logger.debug { "[WS] Received: $text" }
 
@@ -50,7 +49,6 @@ class SignalingHandler(private val roomManager: RoomManager) {
                                 sendMessage(SignalMessage.Error("Invalid message format"))
                             }
                         }
-
                         else -> {}
                     }
                 }
@@ -96,11 +94,9 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 sendMessage(SignalMessage.Joined(userId))
 
                 val userList = room.getAllUsers().map { it.nickname }
-
                 sendMessage(SignalMessage.UserList(userList))
 
                 room.broadcast(SignalMessage.UserJoined(userId, message.nickname), excludeUserId = userId)
-
 
                 val screenSharer = room.getScreenSharer()
                 if (screenSharer != null) {
@@ -134,17 +130,30 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
 
                 val clientAddress = call.request.local.remoteAddress
-                val udpAddress = InetSocketAddress(clientAddress, message.port)
-                room.updateUdpAddress(currentUserId, udpAddress)
+                room.updateUdpAddress(currentUserId, InetSocketAddress(clientAddress, message.port))
+                logger.info { "[WS] \"${currentNickname}\" registered audio UDP port ${message.port}" }
+            }
 
-                logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
+            is SignalMessage.RegisterVideoUdp -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+
+                val room = roomManager.getRoom(roomId) ?: run {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+
+                val clientAddress = call.request.local.remoteAddress
+                room.updateVideoUdpAddress(currentUserId, InetSocketAddress(clientAddress, message.port))
+                logger.info { "[WS] \"${currentNickname}\" registered video UDP port ${message.port}" }
             }
 
             is SignalMessage.StartScreenShare -> {
@@ -153,8 +162,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
@@ -165,8 +173,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val user = room.getUser(currentUserId)
-                if (user == null) {
+                val user = room.getUser(currentUserId) ?: run {
                     sendMessage(SignalMessage.Error("User not found"))
                     return
                 }
@@ -186,7 +193,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     sendMessage(SignalMessage.ScreenShareViewers(viewerIds))
                 }
 
-                logger.info { "User ${user.nickname} started screen sharing: ${message.width}x${message.height} @ ${message.fps}fps, viewers: ${viewerIds.size}" }
+                logger.info { "User ${user.nickname} started screen sharing: ${message.width}x${message.height} @ ${message.fps}fps" }
             }
 
             is SignalMessage.StopScreenShare -> {
@@ -195,85 +202,19 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
 
-                val user = room.getUser(currentUserId)
-                if (user == null) {
+                val user = room.getUser(currentUserId) ?: run {
                     sendMessage(SignalMessage.Error("User not found"))
                     return
                 }
 
                 room.setScreenSharing(currentUserId, false)
-                room.broadcast(
-                    SignalMessage.ScreenShareStopped(currentUserId, user.nickname)
-                )
-
+                room.broadcast(SignalMessage.ScreenShareStopped(currentUserId, user.nickname))
                 logger.info { "User ${user.nickname} stopped screen sharing" }
-            }
-
-            is SignalMessage.SdpOffer -> {
-                if (currentUserId == null) {
-                    sendMessage(SignalMessage.Error("Not joined"))
-                    return
-                }
-                val room = roomManager.getRoom(roomId) ?: return
-                val targetUser = room.getUser(message.targetUserId)
-                if (targetUser == null) {
-                    logger.warn { "[WS] SDP offer target ${message.targetUserId} not found" }
-                    return
-                }
-                val relayMessage = SignalMessage.SdpOffer(
-                    targetUserId = currentUserId!!,
-                    sdp = message.sdp,
-                    sdpType = message.sdpType
-                )
-                room.sendToUser(message.targetUserId, relayMessage)
-                logger.debug { "[WS] Relayed SDP offer from $currentUserId to ${message.targetUserId}" }
-            }
-
-            is SignalMessage.SdpAnswer -> {
-                if (currentUserId == null) {
-                    sendMessage(SignalMessage.Error("Not joined"))
-                    return
-                }
-                val room = roomManager.getRoom(roomId) ?: return
-                val targetUser = room.getUser(message.targetUserId)
-                if (targetUser == null) {
-                    logger.warn { "[WS] SDP answer target ${message.targetUserId} not found" }
-                    return
-                }
-                val relayMessage = SignalMessage.SdpAnswer(
-                    targetUserId = currentUserId!!,
-                    sdp = message.sdp,
-                    sdpType = message.sdpType
-                )
-                room.sendToUser(message.targetUserId, relayMessage)
-                logger.debug { "[WS] Relayed SDP answer from $currentUserId to ${message.targetUserId}" }
-            }
-
-            is SignalMessage.IceCandidateMsg -> {
-                if (currentUserId == null) {
-                    sendMessage(SignalMessage.Error("Not joined"))
-                    return
-                }
-                val room = roomManager.getRoom(roomId) ?: return
-                val targetUser = room.getUser(message.targetUserId)
-                if (targetUser == null) {
-                    logger.warn { "[WS] ICE candidate target ${message.targetUserId} not found" }
-                    return
-                }
-                val relayMessage = SignalMessage.IceCandidateMsg(
-                    targetUserId = currentUserId!!,
-                    sdp = message.sdp,
-                    sdpMid = message.sdpMid,
-                    sdpMLineIndex = message.sdpMLineIndex
-                )
-                room.sendToUser(message.targetUserId, relayMessage)
-                logger.debug { "[WS] Relayed ICE candidate from $currentUserId to ${message.targetUserId}" }
             }
 
             else -> {
@@ -288,9 +229,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
         val wasSharing = room.getUser(userId)?.isScreenSharing == true
 
         val userSession = room.removeUser(userId)
-
         userSession?.let {
-
             if (wasSharing) {
                 room.broadcast(SignalMessage.ScreenShareStopped(userId, it.nickname))
             }

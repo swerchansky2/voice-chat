@@ -8,6 +8,7 @@ data class UserSession(
     val nickname: String,
     val websocketSession: DefaultWebSocketSession,
     var udpAddress: InetSocketAddress? = null,
+    var videoUdpAddress: InetSocketAddress? = null,
     var isScreenSharing: Boolean = false,
     var screenShareWidth: Int = 0,
     var screenShareHeight: Int = 0,

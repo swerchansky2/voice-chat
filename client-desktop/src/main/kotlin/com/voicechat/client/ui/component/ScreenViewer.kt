@@ -22,37 +22,21 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.voicechat.client.ui.theme.AppColors
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.awt.image.BufferedImage
 
 @Composable
 fun ScreenViewer(
-    screenFrame: BufferedImage?,
+    screenFrame: ImageBitmap?,       // already decoded — no conversion needed on the UI thread
     sharerNickname: String?,
     modifier: Modifier = Modifier
 ) {
-    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var imageSize by remember { mutableStateOf(Pair(0, 0)) }
+    val isLive = screenFrame != null
 
-    LaunchedEffect(screenFrame) {
-        if (screenFrame != null) {
-            val bitmap = withContext(Dispatchers.Default) { screenFrame.toComposeImageBitmap() }
-            imageBitmap = bitmap
-            imageSize = Pair(screenFrame.width, screenFrame.height)
-        }
-    }
-
-    val isLive = imageBitmap != null
-
-    // Animated glow border when stream is active
     val infiniteTransition = rememberInfiniteTransition(label = "viewer")
     val borderAlpha by infiniteTransition.animateFloat(
         initialValue = 0.4f, targetValue = 0.9f,
         animationSpec = infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "borderGlow"
     )
-    // Loading spinner rotation
     val spinAngle by infiniteTransition.animateFloat(
         initialValue = 0f, targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
@@ -89,7 +73,6 @@ fun ScreenViewer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Live indicator dot
                 Box(
                     modifier = Modifier
                         .size(8.dp)
@@ -105,9 +88,9 @@ fun ScreenViewer(
                     color = AppColors.TextPrimary
                 )
             }
-            if (imageSize.first > 0) {
+            if (screenFrame != null) {
                 Text(
-                    text = "${imageSize.first}×${imageSize.second}",
+                    text = "${screenFrame.width}×${screenFrame.height}",
                     fontSize = 11.sp,
                     color = AppColors.TextMuted
                 )
@@ -122,13 +105,11 @@ fun ScreenViewer(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            val bmp = imageBitmap
-            if (bmp != null) {
+            if (screenFrame != null) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawVideoFrame(bmp)
+                    drawVideoFrame(screenFrame)
                 }
             } else if (sharerNickname != null) {
-                // Connecting state with spinner
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -166,16 +147,16 @@ fun ScreenViewer(
 private fun DrawScope.drawVideoFrame(bitmap: ImageBitmap) {
     val scaleX = size.width / bitmap.width.toFloat()
     val scaleY = size.height / bitmap.height.toFloat()
-    val scale = minOf(scaleX, scaleY)
-    val dstW = (bitmap.width * scale).toInt()
-    val dstH = (bitmap.height * scale).toInt()
-    val offX = ((size.width - dstW) / 2).toInt()
-    val offY = ((size.height - dstH) / 2).toInt()
+    val scale  = minOf(scaleX, scaleY)
+    val dstW   = (bitmap.width * scale).toInt()
+    val dstH   = (bitmap.height * scale).toInt()
+    val offX   = ((size.width - dstW) / 2).toInt()
+    val offY   = ((size.height - dstH) / 2).toInt()
     drawImage(
-        image = bitmap,
+        image     = bitmap,
         srcOffset = IntOffset.Zero,
-        srcSize = IntSize(bitmap.width, bitmap.height),
+        srcSize   = IntSize(bitmap.width, bitmap.height),
         dstOffset = IntOffset(offX, offY),
-        dstSize = IntSize(dstW, dstH)
+        dstSize   = IntSize(dstW, dstH)
     )
 }

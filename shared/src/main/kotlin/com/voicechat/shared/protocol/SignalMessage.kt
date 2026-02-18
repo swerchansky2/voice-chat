@@ -17,6 +17,10 @@ sealed class SignalMessage {
     @Serializable
     @SerialName("register_udp")
     data class RegisterUdp(val port: Int) : SignalMessage()
+
+    @Serializable
+    @SerialName("register_video_udp")
+    data class RegisterVideoUdp(val port: Int) : SignalMessage()
     
     @Serializable
     @SerialName("user_list")

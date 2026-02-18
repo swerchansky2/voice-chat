@@ -1,7 +1,9 @@
 package com.voicechat.client.viewmodel
 
+import androidx.compose.ui.graphics.ImageBitmap
 import com.voicechat.client.network.SignalingClient
 import com.voicechat.client.network.UdpAudioClient
+import com.voicechat.client.network.VideoUdpClient
 import com.voicechat.client.audio.AudioEngine
 import com.voicechat.client.screen.ScreenEngine
 import com.voicechat.client.screen.ScreenResolution
@@ -14,7 +16,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.awt.image.BufferedImage
 
 private val logger = KotlinLogging.logger("VM")
 
@@ -29,7 +30,8 @@ class VoiceChatViewModel(
     private val signalingClient: SignalingClient,
     private val udpAudioClient: UdpAudioClient,
     private val audioEngine: AudioEngine,
-    private val screenEngine: ScreenEngine
+    private val screenEngine: ScreenEngine,
+    private val videoUdpClient: VideoUdpClient
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -54,7 +56,7 @@ class VoiceChatViewModel(
     private val _screenShareSettings = MutableStateFlow(ScreenShareSettings())
     val screenShareSettings: StateFlow<ScreenShareSettings> = _screenShareSettings.asStateFlow()
 
-    val receivedScreenFrame: StateFlow<BufferedImage?> = screenEngine.receivedFrame
+    val receivedScreenFrame: StateFlow<ImageBitmap?> = screenEngine.receivedFrame
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
@@ -71,11 +73,10 @@ class VoiceChatViewModel(
         scope.launch {
             signalingClient.events.collect { event ->
                 when (event) {
-                    is SignalingClient.Event.Connected -> {
-                        // Connection established, waiting for Joined
-                    }
+                    is SignalingClient.Event.Connected -> { }
+
                     is SignalingClient.Event.Disconnected -> {
-                        logger.info { "[VM] Disconnected from server" }
+                        logger.info { "[VM] Disconnected" }
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
                         _isScreenSharing.value = false
@@ -84,45 +85,48 @@ class VoiceChatViewModel(
                         screenEngine.stopSharing()
                         screenEngine.stopReceiving()
                         screenEngine.clearReceivedFrame()
+                        videoUdpClient.stop()
                         audioEngine.stop()
                         udpAudioClient.stop()
                     }
+
                     is SignalingClient.Event.Joined -> {
-                        logger.info { "[VM] Joined room — userId=${event.userId}, nickname=$currentNickname" }
+                        logger.info { "[VM] Joined — userId=${event.userId}" }
                         currentUserId = event.userId
                         _connectionState.value = ConnectionState.Connected
 
-                        val udpPort = udpAudioClient.start(currentHost!!)
-                        signalingClient.registerUdp(udpPort)
+                        val audioPort = udpAudioClient.start(currentHost!!)
+                        signalingClient.registerUdp(audioPort)
+
+                        val videoPort = videoUdpClient.start(currentHost!!)
+                        signalingClient.registerVideoUdp(videoPort)
 
                         audioEngine.start(event.userId)
                     }
+
                     is SignalingClient.Event.UserList -> {
-                        logger.info { "[VM] User list: ${event.users}" }
+                        logger.info { "[VM] UserList: ${event.users}" }
                         _userList.value = event.users
                     }
+
                     is SignalingClient.Event.UserJoined -> {
-                        logger.info { "[VM] User joined: \"${event.nickname}\" (${event.userId})" }
+                        logger.info { "[VM] UserJoined: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value + event.nickname
-
-                        if (_isScreenSharing.value) {
-                            logger.info { "[VM] Creating WebRTC offer for new viewer ${event.userId}" }
-                            screenEngine.createOfferForViewer(event.userId)
-                        }
                     }
+
                     is SignalingClient.Event.UserLeft -> {
-                        logger.info { "[VM] User left: \"${event.nickname}\" (${event.userId})" }
+                        logger.info { "[VM] UserLeft: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value - event.nickname
-
-                        screenEngine.closePeerConnection(event.userId)
                     }
+
                     is SignalingClient.Event.Error -> {
                         logger.error { "[VM] Error: ${event.message}" }
                         _errorMessage.value = event.message
                         _connectionState.value = ConnectionState.Error(event.message)
                     }
+
                     is SignalingClient.Event.ScreenShareStarted -> {
-                        logger.info { "[VM] Screen share started by ${event.nickname} (${event.width}x${event.height} @ ${event.fps}fps)" }
+                        logger.info { "[VM] ScreenShareStarted by ${event.nickname} (${event.width}x${event.height} @ ${event.fps}fps)" }
                         _screenSharerNickname.value = event.nickname
                         screenSharerUserId = event.userId
                         if (event.userId == currentUserId) {
@@ -131,8 +135,9 @@ class VoiceChatViewModel(
                             screenEngine.startReceiving(event.userId)
                         }
                     }
+
                     is SignalingClient.Event.ScreenShareStopped -> {
-                        logger.info { "[VM] Screen share stopped by ${event.nickname}" }
+                        logger.info { "[VM] ScreenShareStopped by ${event.nickname}" }
                         _screenSharerNickname.value = null
                         screenSharerUserId = null
                         if (event.userId == currentUserId) {
@@ -141,23 +146,8 @@ class VoiceChatViewModel(
                         screenEngine.stopReceiving()
                         screenEngine.clearReceivedFrame()
                     }
-                    is SignalingClient.Event.ScreenShareViewers -> {
-                        logger.info { "[VM] Creating WebRTC offers for ${event.viewerUserIds.size} existing viewers" }
-                        for (viewerId in event.viewerUserIds) {
-                            screenEngine.createOfferForViewer(viewerId)
-                        }
-                    }
-                    is SignalingClient.Event.SdpOfferReceived -> {
-                        logger.info { "[VM] SDP offer from ${event.fromUserId}" }
-                        screenEngine.handleSdpOffer(event.fromUserId, event.sdp, event.type)
-                    }
-                    is SignalingClient.Event.SdpAnswerReceived -> {
-                        logger.info { "[VM] SDP answer from ${event.fromUserId}" }
-                        screenEngine.handleSdpAnswer(event.fromUserId, event.sdp, event.type)
-                    }
-                    is SignalingClient.Event.IceCandidateReceived -> {
-                        screenEngine.handleIceCandidate(event.fromUserId, event.sdp, event.sdpMid, event.sdpMLineIndex)
-                    }
+
+                    else -> {}
                 }
             }
         }
@@ -173,9 +163,7 @@ class VoiceChatViewModel(
 
     fun connect(nickname: String, host: String, port: Int) {
         if (_connectionState.value is ConnectionState.Connecting ||
-            _connectionState.value is ConnectionState.Connected) {
-            return
-        }
+            _connectionState.value is ConnectionState.Connected) return
 
         currentNickname = nickname
         currentHost = host
@@ -205,6 +193,7 @@ class VoiceChatViewModel(
             screenEngine.stopReceiving()
             screenEngine.clearReceivedFrame()
             signalingClient.disconnect()
+            videoUdpClient.stop()
             udpAudioClient.stop()
             audioEngine.stop()
             _connectionState.value = ConnectionState.Disconnected
@@ -219,10 +208,10 @@ class VoiceChatViewModel(
     }
 
     fun toggleMute() {
-        val newMutedState = !_isMuted.value
-        _isMuted.value = newMutedState
-        audioEngine.setMuted(newMutedState)
-        logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
+        val newMuted = !_isMuted.value
+        _isMuted.value = newMuted
+        audioEngine.setMuted(newMuted)
+        logger.info { "[VM] ${if (newMuted) "Muted" else "Unmuted"}" }
     }
 
     fun toggleScreenShare() {
@@ -253,7 +242,7 @@ class VoiceChatViewModel(
 
     fun updateScreenShareSettings(resolution: ScreenResolution) {
         _screenShareSettings.value = _screenShareSettings.value.copy(resolution = resolution)
-        logger.info { "Screen share resolution updated: ${resolution.label}" }
+        logger.info { "[VM] Screen share resolution: ${resolution.label}" }
     }
 
     fun clearError() {
