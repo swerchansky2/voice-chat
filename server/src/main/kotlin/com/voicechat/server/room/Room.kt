@@ -55,6 +55,18 @@ class Room(val roomId: String) {
             }
     }
 
+    suspend fun broadcastBinary(data: ByteArray, excludeUserId: String? = null) {
+        users.values
+            .filter { it.userId != excludeUserId }
+            .forEach { user ->
+                try {
+                    user.websocketSession.send(Frame.Binary(true, data))
+                } catch (e: Exception) {
+                    logger.error(e) { "[Room] Failed to send binary frame to \"${user.nickname}\"" }
+                }
+            }
+    }
+
     suspend fun sendToUser(userId: String, message: SignalMessage) {
         val user = users[userId] ?: return
         try {
@@ -70,6 +82,27 @@ class Room(val roomId: String) {
         user?.udpAddress = address
         logger.info { "[Room] Updated UDP address for \"${user?.nickname ?: userId}\": $address" }
     }
+
+    fun updateVideoUdpAddress(userId: String, address: java.net.InetSocketAddress) {
+        val user = users[userId]
+        user?.videoUdpAddress = address
+        logger.info { "[Room] Updated video UDP address for \"${user?.nickname ?: userId}\": $address" }
+    }
+
+    fun setScreenSharing(userId: String, sharing: Boolean, width: Int = 0, height: Int = 0, fps: Int = 0) {
+        users[userId]?.let {
+            it.isScreenSharing = sharing
+            if (sharing) {
+                it.screenShareWidth = width
+                it.screenShareHeight = height
+                it.screenShareFps = fps
+            }
+        }
+        logger.info { "User $userId screen sharing: $sharing" }
+    }
+
+    fun getScreenSharer(): UserSession? =
+        users.values.find { it.isScreenSharing }
 
     fun size(): Int = users.size
 }

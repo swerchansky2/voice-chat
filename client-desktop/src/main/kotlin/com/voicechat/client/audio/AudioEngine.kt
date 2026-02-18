@@ -5,6 +5,7 @@ import com.voicechat.shared.protocol.AudioPacket
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -23,6 +24,7 @@ class AudioEngine(
     private var userId: String? = null
     private var isMuted = false
     private var sequenceCounter = 0
+    private var captureJob: Job? = null
 
     fun start(userId: String) {
         this.userId = userId
@@ -33,7 +35,7 @@ class AudioEngine(
         audioCapture.start()
 
         // Subscribe to captured audio
-        scope.launch {
+        captureJob = scope.launch {
             audioCapture.audioData.collect { pcmData ->
                 if (!isMuted && userId != null) {
                     try {
@@ -53,6 +55,8 @@ class AudioEngine(
     }
 
     fun stop() {
+        captureJob?.cancel()
+        captureJob = null
         audioCapture.stop()
         jitterBuffer?.stop()
         jitterBuffer = null

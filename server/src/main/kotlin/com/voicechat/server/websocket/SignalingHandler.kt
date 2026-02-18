@@ -27,21 +27,29 @@ class SignalingHandler(private val roomManager: RoomManager) {
 
             try {
                 for (frame in incoming) {
-                    if (frame !is Frame.Text) continue
+                    when (frame) {
+                        is Frame.Text -> {
+                            val text = frame.readText()
+                            logger.debug { "[WS] Received: $text" }
 
-                    val text = frame.readText()
-                    logger.debug { "[WS] Received: $text" }
-
-                    try {
-                        val message = Json.decodeFromString<SignalMessage>(text)
-                        handleMessage(message, currentUserId, currentNickname, currentRoomId) { userId, nickname, roomId ->
-                            currentUserId = userId
-                            currentNickname = nickname
-                            currentRoomId = roomId
+                            try {
+                                val message = Json.decodeFromString<SignalMessage>(text)
+                                handleMessage(
+                                    message,
+                                    currentUserId,
+                                    currentNickname,
+                                    currentRoomId
+                                ) { userId, nickname, roomId ->
+                                    currentUserId = userId
+                                    currentNickname = nickname
+                                    currentRoomId = roomId
+                                }
+                            } catch (e: Exception) {
+                                logger.error(e) { "[WS] Failed to parse message from ${currentNickname ?: remoteAddress}" }
+                                sendMessage(SignalMessage.Error("Invalid message format"))
+                            }
                         }
-                    } catch (e: Exception) {
-                        logger.error(e) { "[WS] Failed to parse message from ${currentNickname ?: remoteAddress}" }
-                        sendMessage(SignalMessage.Error("Invalid message format"))
+                        else -> {}
                     }
                 }
             } catch (e: Exception) {
@@ -88,7 +96,22 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 val userList = room.getAllUsers().map { it.nickname }
                 sendMessage(SignalMessage.UserList(userList))
 
-                room.broadcast(SignalMessage.UserJoined(message.nickname), excludeUserId = userId)
+                room.broadcast(SignalMessage.UserJoined(userId, message.nickname), excludeUserId = userId)
+
+                val screenSharer = room.getScreenSharer()
+                if (screenSharer != null) {
+                    sendMessage(
+                        SignalMessage.ScreenShareStarted(
+                            screenSharer.userId,
+                            screenSharer.nickname,
+                            screenSharer.screenShareWidth,
+                            screenSharer.screenShareHeight,
+                            screenSharer.screenShareFps
+                        )
+                    )
+                }
+
+                logger.info { "User ${message.nickname} joined as $userId" }
             }
 
             is SignalMessage.Leave -> {
@@ -107,17 +130,91 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     return
                 }
 
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
 
                 val clientAddress = call.request.local.remoteAddress
-                val udpAddress = InetSocketAddress(clientAddress, message.port)
-                room.updateUdpAddress(currentUserId, udpAddress)
+                room.updateUdpAddress(currentUserId, InetSocketAddress(clientAddress, message.port))
+                logger.info { "[WS] \"${currentNickname}\" registered audio UDP port ${message.port}" }
+            }
 
-                logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
+            is SignalMessage.RegisterVideoUdp -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+
+                val room = roomManager.getRoom(roomId) ?: run {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+
+                val clientAddress = call.request.local.remoteAddress
+                room.updateVideoUdpAddress(currentUserId, InetSocketAddress(clientAddress, message.port))
+                logger.info { "[WS] \"${currentNickname}\" registered video UDP port ${message.port}" }
+            }
+
+            is SignalMessage.StartScreenShare -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+
+                val room = roomManager.getRoom(roomId) ?: run {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+
+                val existingSharer = room.getScreenSharer()
+                if (existingSharer != null) {
+                    sendMessage(SignalMessage.Error("Someone is already sharing their screen"))
+                    return
+                }
+
+                val user = room.getUser(currentUserId) ?: run {
+                    sendMessage(SignalMessage.Error("User not found"))
+                    return
+                }
+
+                room.setScreenSharing(currentUserId, true, message.width, message.height, message.fps)
+                room.broadcast(
+                    SignalMessage.ScreenShareStarted(
+                        currentUserId, user.nickname,
+                        message.width, message.height, message.fps
+                    )
+                )
+
+                val viewerIds = room.getAllUsers()
+                    .filter { it.userId != currentUserId }
+                    .map { it.userId }
+                if (viewerIds.isNotEmpty()) {
+                    sendMessage(SignalMessage.ScreenShareViewers(viewerIds))
+                }
+
+                logger.info { "User ${user.nickname} started screen sharing: ${message.width}x${message.height} @ ${message.fps}fps" }
+            }
+
+            is SignalMessage.StopScreenShare -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+
+                val room = roomManager.getRoom(roomId) ?: run {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+
+                val user = room.getUser(currentUserId) ?: run {
+                    sendMessage(SignalMessage.Error("User not found"))
+                    return
+                }
+
+                room.setScreenSharing(currentUserId, false)
+                room.broadcast(SignalMessage.ScreenShareStopped(currentUserId, user.nickname))
+                logger.info { "User ${user.nickname} stopped screen sharing" }
             }
 
             else -> {
@@ -128,10 +225,15 @@ class SignalingHandler(private val roomManager: RoomManager) {
 
     private suspend fun DefaultWebSocketServerSession.handleDisconnect(userId: String, nickname: String?, roomId: String) {
         val room = roomManager.getRoom(roomId) ?: return
-        val userSession = room.removeUser(userId)
 
+        val wasSharing = room.getUser(userId)?.isScreenSharing == true
+
+        val userSession = room.removeUser(userId)
         userSession?.let {
-            room.broadcast(SignalMessage.UserLeft(it.nickname))
+            if (wasSharing) {
+                room.broadcast(SignalMessage.ScreenShareStopped(userId, it.nickname))
+            }
+            room.broadcast(SignalMessage.UserLeft(userId, it.nickname))
             roomManager.removeRoomIfEmpty(roomId)
             logger.info { "[WS] User \"${it.nickname}\" ($userId) disconnected" }
         }

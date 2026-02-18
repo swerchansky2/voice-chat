@@ -5,6 +5,19 @@ plugins {
     id("org.jetbrains.compose")
 }
 
+fun getFfmpegClassifier(): String {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    return when {
+        os.contains("mac") && arch.contains("aarch64") -> "macosx-arm64"
+        os.contains("mac") -> "macosx-x86_64"
+        os.contains("linux") && arch.contains("aarch64") -> "linux-arm64"
+        os.contains("linux") -> "linux-x86_64"
+        os.contains("win") -> "windows-x86_64"
+        else -> throw GradleException("Unsupported platform: $os $arch")
+    }
+}
+
 dependencies {
     implementation(project(":shared"))
     
@@ -35,6 +48,10 @@ dependencies {
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation("io.github.oshai:kotlin-logging-jvm:6.0.3")
+
+    // FFmpeg via JavaCV for screen share H.264 encode/decode
+    implementation("org.bytedeco:javacv:1.5.11")
+    runtimeOnly("org.bytedeco:ffmpeg:6.1.1-1.5.11:${getFfmpegClassifier()}")
 }
 
 kotlin {
