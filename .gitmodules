@@ -1,0 +1,3 @@
+[submodule "webrtc-native/webrtc-src"]
+	path = webrtc-native/webrtc-src
+	url = https://github.com/webrtc-sdk/libwebrtc
