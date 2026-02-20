@@ -4,6 +4,7 @@ import dev.onvoid.webrtc.*
 import dev.onvoid.webrtc.media.audio.AudioOptions
 import dev.onvoid.webrtc.media.audio.AudioTrack
 import dev.onvoid.webrtc.media.audio.AudioTrackSource
+import dev.onvoid.webrtc.media.video.CustomVideoSource
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoFrame
@@ -11,6 +12,7 @@ import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import dev.onvoid.webrtc.media.video.desktop.WindowCapturer
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 
 private val logger = KotlinLogging.logger("WebRTC")
 
@@ -36,6 +38,8 @@ class WebRtcManager(
     private var audioAdded = false
 
     private var videoDesktopSource: VideoDesktopSource? = null
+    private var robotCapture: RobotScreenCapture? = null
+    private var customVideoSource: CustomVideoSource? = null
     private var videoTrack: VideoTrack? = null
     @Volatile
     var isSharing = false
@@ -111,25 +115,88 @@ class WebRtcManager(
         val currentFactory = factory ?: return
         if (isSharing) return
 
+        if (isLinux) {
+            startRobotCapture(currentFactory, sourceId, isWindow)
+        } else {
+            startNativeCapture(currentFactory, sourceId, isWindow)
+        }
+        isSharing = true
+        logger.info { "[WebRTC] Screen capture started (sourceId=$sourceId, isWindow=$isWindow, robot=$isLinux)" }
+    }
+
+    private fun startNativeCapture(currentFactory: PeerConnectionFactory, sourceId: Long, isWindow: Boolean) {
         val source = VideoDesktopSource()
         source.setFrameRate(30)
         source.setMaxFrameSize(1920, 1080)
         source.setSourceId(sourceId, isWindow)
         source.start()
         videoDesktopSource = source
-
         videoTrack = currentFactory.createVideoTrack("screen", source)
-        isSharing = true
-        logger.info { "[WebRTC] Screen capture started (sourceId=$sourceId, isWindow=$isWindow)" }
+    }
+
+    private fun startRobotCapture(currentFactory: PeerConnectionFactory, sourceId: Long, isWindow: Boolean) {
+        val bounds = if (isWindow) {
+            getWindowBounds(sourceId)
+        } else {
+            getScreenBounds(sourceId.toInt())
+        }
+        if (bounds == null) {
+            logger.error { "[WebRTC] Could not determine capture bounds for sourceId=$sourceId, isWindow=$isWindow" }
+            return
+        }
+
+        val source = CustomVideoSource()
+        customVideoSource = source
+        videoTrack = currentFactory.createVideoTrack("screen", source)
+
+        val capture = RobotScreenCapture(source, bounds, frameRate = 15)
+        robotCapture = capture
+        capture.start()
+    }
+
+    private fun getScreenBounds(screenIndex: Int): Rectangle? {
+        val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        val devices = ge.screenDevices
+        if (screenIndex < 0 || screenIndex >= devices.size) return devices.firstOrNull()?.defaultConfiguration?.bounds
+        return devices[screenIndex].defaultConfiguration.bounds
+    }
+
+    private fun getWindowBounds(windowId: Long): Rectangle? {
+        return try {
+            val process = ProcessBuilder("xdotool", "getwindowgeometry", "--shell", windowId.toString())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            if (process.exitValue() != 0) return null
+
+            var x = 0; var y = 0; var w = 0; var h = 0
+            for (line in output.lines()) {
+                when {
+                    line.startsWith("X=") -> x = line.substringAfter("=").toIntOrNull() ?: 0
+                    line.startsWith("Y=") -> y = line.substringAfter("=").toIntOrNull() ?: 0
+                    line.startsWith("WIDTH=") -> w = line.substringAfter("=").toIntOrNull() ?: 0
+                    line.startsWith("HEIGHT=") -> h = line.substringAfter("=").toIntOrNull() ?: 0
+                }
+            }
+            if (w > 0 && h > 0) Rectangle(x, y, w, h) else null
+        } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] xdotool failed for window $windowId" }
+            null
+        }
     }
 
     fun stopScreenShare() {
         isSharing = false
+        robotCapture?.stop()
+        robotCapture = null
         try { videoDesktopSource?.stop() } catch (_: Exception) {}
         try { videoTrack?.dispose() } catch (_: Exception) {}
         try { videoDesktopSource?.dispose() } catch (_: Exception) {}
+        try { customVideoSource?.dispose() } catch (_: Exception) {}
         videoTrack = null
         videoDesktopSource = null
+        customVideoSource = null
         logger.info { "[WebRTC] Screen capture stopped" }
     }
 
