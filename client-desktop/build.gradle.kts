@@ -31,6 +31,10 @@ dependencies {
     
     // WebRTC (native JNI)
     implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
+    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
+    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
+    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-x86_64")
+    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-aarch64")
 
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
