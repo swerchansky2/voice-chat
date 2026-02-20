@@ -2,9 +2,9 @@ package com.voicechat.client.viewmodel
 
 import androidx.compose.ui.graphics.ImageBitmap
 import com.voicechat.client.network.SignalingClient
+import com.voicechat.client.webrtc.CaptureSource
 import com.voicechat.client.webrtc.VideoFrameConverter
 import com.voicechat.client.webrtc.WebRtcManager
-import dev.onvoid.webrtc.media.video.desktop.DesktopSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -196,11 +196,11 @@ class VoiceChatViewModel(
         logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
     }
 
-    fun getAvailableScreens(): List<DesktopSource> {
+    fun getAvailableScreens(): List<CaptureSource> {
         return webRtcManager?.getAvailableScreens() ?: emptyList()
     }
 
-    fun getAvailableWindows(): List<DesktopSource> {
+    fun getAvailableWindows(): List<CaptureSource> {
         return webRtcManager?.getAvailableWindows() ?: emptyList()
     }
 

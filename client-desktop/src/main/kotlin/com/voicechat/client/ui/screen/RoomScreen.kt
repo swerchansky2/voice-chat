@@ -39,9 +39,9 @@ fun RoomScreen(
         ScreenSourceDialog(
             screens = screens,
             windows = windows,
-            onSourceSelected = { selection ->
+            onSourceSelected = { source ->
                 showSourceDialog = false
-                viewModel.startScreenShare(selection.sourceId, selection.isWindow)
+                viewModel.startScreenShare(source.id, source.isWindow)
             },
             onDismiss = { showSourceDialog = false }
         )

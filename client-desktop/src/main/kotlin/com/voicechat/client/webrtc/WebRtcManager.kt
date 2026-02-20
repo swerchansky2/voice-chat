@@ -7,12 +7,20 @@ import dev.onvoid.webrtc.media.audio.AudioTrackSource
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoFrame
-import dev.onvoid.webrtc.media.video.desktop.DesktopSource
 import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import dev.onvoid.webrtc.media.video.desktop.WindowCapturer
 import io.github.oshai.kotlinlogging.KotlinLogging
+import java.awt.GraphicsEnvironment
 
 private val logger = KotlinLogging.logger("WebRTC")
+
+data class CaptureSource(
+    val id: Long,
+    val title: String,
+    val isWindow: Boolean
+)
+
+private val isLinux = System.getProperty("os.name").lowercase().contains("linux")
 
 class WebRtcManager(
     private val iceCandidateCallback: (RTCIceCandidate) -> Unit,
@@ -40,18 +48,63 @@ class WebRtcManager(
         logger.info { "[WebRTC] PeerConnectionFactory initialized" }
     }
 
-    fun getAvailableScreens(): List<DesktopSource> {
-        val capturer = ScreenCapturer()
-        val sources = capturer.desktopSources.toList()
-        capturer.dispose()
-        return sources
+    fun getAvailableScreens(): List<CaptureSource> {
+        if (isLinux) return getLinuxScreens()
+        return try {
+            val capturer = ScreenCapturer()
+            val sources = capturer.desktopSources.map { CaptureSource(it.id, it.title.ifEmpty { "Screen ${it.id}" }, false) }
+            capturer.dispose()
+            sources
+        } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] Native ScreenCapturer failed, using fallback" }
+            getLinuxScreens()
+        }
     }
 
-    fun getAvailableWindows(): List<DesktopSource> {
-        val capturer = WindowCapturer()
-        val sources = capturer.desktopSources.toList()
-        capturer.dispose()
-        return sources
+    fun getAvailableWindows(): List<CaptureSource> {
+        if (isLinux) return getLinuxWindows()
+        return try {
+            val capturer = WindowCapturer()
+            val sources = capturer.desktopSources.map { CaptureSource(it.id, it.title.ifEmpty { "Window ${it.id}" }, true) }
+            capturer.dispose()
+            sources
+        } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] Native WindowCapturer failed, using fallback" }
+            getLinuxWindows()
+        }
+    }
+
+    private fun getLinuxScreens(): List<CaptureSource> {
+        val ge = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        return ge.screenDevices.mapIndexed { index, device ->
+            val bounds = device.defaultConfiguration.bounds
+            CaptureSource(index.toLong(), "Screen $index (${bounds.width}x${bounds.height})", false)
+        }
+    }
+
+    private fun getLinuxWindows(): List<CaptureSource> {
+        return try {
+            val process = ProcessBuilder("wmctrl", "-l")
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            if (process.exitValue() != 0) return emptyList()
+
+            output.lines()
+                .filter { it.isNotBlank() }
+                .mapNotNull { line ->
+                    val parts = line.split(Regex("\\s+"), limit = 4)
+                    if (parts.size < 4) return@mapNotNull null
+                    val hexId = parts[0]
+                    val title = parts[3]
+                    val id = hexId.removePrefix("0x").toLongOrNull(16) ?: return@mapNotNull null
+                    CaptureSource(id, title, true)
+                }
+        } catch (e: Exception) {
+            logger.debug { "[WebRTC] wmctrl not available for window list: ${e.message}" }
+            emptyList()
+        }
     }
 
     fun startScreenShare(sourceId: Long, isWindow: Boolean) {

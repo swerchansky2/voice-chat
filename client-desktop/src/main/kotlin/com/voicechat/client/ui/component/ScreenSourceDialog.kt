@@ -17,19 +17,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.voicechat.client.ui.theme.AppColors
-import dev.onvoid.webrtc.media.video.desktop.DesktopSource
-
-data class SourceSelection(
-    val sourceId: Long,
-    val isWindow: Boolean,
-    val title: String
-)
+import com.voicechat.client.webrtc.CaptureSource
 
 @Composable
 fun ScreenSourceDialog(
-    screens: List<DesktopSource>,
-    windows: List<DesktopSource>,
-    onSourceSelected: (SourceSelection) -> Unit,
+    screens: List<CaptureSource>,
+    windows: List<CaptureSource>,
+    onSourceSelected: (CaptureSource) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
@@ -95,11 +89,9 @@ fun ScreenSourceDialog(
                 ) {
                     items(sources) { source ->
                         SourceItem(
-                            title = source.title.ifEmpty { "Screen ${source.id}" },
+                            title = source.title,
                             onClick = {
-                                onSourceSelected(
-                                    SourceSelection(source.id, isWindow, source.title)
-                                )
+                                onSourceSelected(source)
                             }
                         )
                     }
