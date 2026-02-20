@@ -57,7 +57,7 @@ class RobotScreenCapture(
 
             val frame = VideoFrame(buffer, System.nanoTime())
             videoSource.pushFrame(frame)
-            frame.dispose()
+            //frame.dispose()
         } catch (e: Exception) {
             logger.warn(e) { "[RobotCapture] Frame capture failed" }
         }
