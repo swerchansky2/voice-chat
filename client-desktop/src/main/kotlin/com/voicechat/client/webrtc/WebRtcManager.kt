@@ -127,7 +127,6 @@ class WebRtcManager(
     fun dispose() {
         peerConnection?.close()
         audioTrack?.dispose()
-        audioSource?.dispose()
         factory?.dispose()
         peerConnection = null
         audioTrack = null
