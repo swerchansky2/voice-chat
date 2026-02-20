@@ -39,6 +39,7 @@ class WebRtcManager(
 
     private var videoDesktopSource: VideoDesktopSource? = null
     private var robotCapture: RobotScreenCapture? = null
+    private var ffmpegCapture: FfmpegScreenCapture? = null
     private var customVideoSource: CustomVideoSource? = null
     private var videoTrack: VideoTrack? = null
     @Volatile
@@ -116,12 +117,11 @@ class WebRtcManager(
         if (isSharing) return
 
         if (isLinux) {
-            startRobotCapture(currentFactory, sourceId, isWindow)
+            startLinuxCapture(currentFactory, sourceId, isWindow)
         } else {
             startNativeCapture(currentFactory, sourceId, isWindow)
         }
         isSharing = true
-        logger.info { "[WebRTC] Screen capture started (sourceId=$sourceId, isWindow=$isWindow, robot=$isLinux)" }
     }
 
     private fun startNativeCapture(currentFactory: PeerConnectionFactory, sourceId: Long, isWindow: Boolean) {
@@ -132,9 +132,10 @@ class WebRtcManager(
         source.start()
         videoDesktopSource = source
         videoTrack = currentFactory.createVideoTrack("screen", source)
+        logger.info { "[WebRTC] Native capture started (sourceId=$sourceId, isWindow=$isWindow)" }
     }
 
-    private fun startRobotCapture(currentFactory: PeerConnectionFactory, sourceId: Long, isWindow: Boolean) {
+    private fun startLinuxCapture(currentFactory: PeerConnectionFactory, sourceId: Long, isWindow: Boolean) {
         val bounds = if (isWindow) {
             getWindowBounds(sourceId)
         } else {
@@ -149,9 +150,17 @@ class WebRtcManager(
         customVideoSource = source
         videoTrack = currentFactory.createVideoTrack("screen", source)
 
-        val capture = RobotScreenCapture(source, bounds, frameRate = 15)
-        robotCapture = capture
-        capture.start()
+        if (!isWindow && FfmpegScreenCapture.isAvailable()) {
+            val capture = FfmpegScreenCapture(source, bounds, frameRate = 30)
+            ffmpegCapture = capture
+            capture.start()
+            logger.info { "[WebRTC] FFmpeg capture started (${bounds.width}x${bounds.height} @ 30fps)" }
+        } else {
+            val capture = RobotScreenCapture(source, bounds, frameRate = 15)
+            robotCapture = capture
+            capture.start()
+            logger.info { "[WebRTC] Robot capture fallback (${bounds.width}x${bounds.height} @ 15fps)" }
+        }
     }
 
     private fun getScreenBounds(screenIndex: Int): Rectangle? {
@@ -188,6 +197,8 @@ class WebRtcManager(
 
     fun stopScreenShare() {
         isSharing = false
+        ffmpegCapture?.stop()
+        ffmpegCapture = null
         robotCapture?.stop()
         robotCapture = null
         try { videoDesktopSource?.stop() } catch (_: Exception) {}
