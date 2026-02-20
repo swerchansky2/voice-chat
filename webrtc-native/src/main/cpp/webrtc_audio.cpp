@@ -50,18 +50,18 @@ AudioManager::~AudioManager() {
     shutdown();
 }
 
-// Observer that attaches sinks for incoming audio tracks and keeps them alive
+// Forward declaration
+class JavaAudioSink;
+
+// Observer that attaches sinks for incoming audio tracks and forwards ICE candidates to Java
 class PeerObserver : public libwebrtc::RTCPeerConnectionObserver {
 public:
     PeerObserver(std::shared_ptr<AudioManager::Peer> peer) : peer_(peer) {}
 
     void OnAddStream(scoped_refptr<libwebrtc::RTCMediaStream> stream) override {
-        // attach sinks for each audio track
         auto audio_tracks = stream->audio_tracks();
         for (auto& track : audio_tracks) {
-            // create sink and attach
             auto sink = std::make_unique<JavaAudioSink>(peer_ ? peer_->id : 0);
-            // we can't get peerId easily here; store sink and register via track->AddSink
             track->AddSink(sink.get());
             if (peer_) {
                 peer_->audioSinks.push_back(std::move(sink));
@@ -72,14 +72,52 @@ public:
     void OnRemoveStream(scoped_refptr<libwebrtc::RTCMediaStream> stream) override {}
     void OnDataChannel(scoped_refptr<libwebrtc::RTCDataChannel> data_channel) override {}
     void OnRenegotiationNeeded() override {}
-    void OnPeerConnectionState(libwebrtc::RTCPeerConnectionState state) override {}
+    void OnPeerConnectionState(libwebrtc::RTCPeerConnectionState state) override {
+        std::cout << "PeerObserver: connection state changed to " << (int)state
+                  << " for peer " << (peer_ ? peer_->id : -1) << std::endl;
+    }
     void OnIceGatheringState(libwebrtc::RTCIceGatheringState state) override {}
     void OnIceConnectionState(libwebrtc::RTCIceConnectionState state) override {}
     void OnSignalingState(libwebrtc::RTCSignalingState state) override {}
     void OnTrack(scoped_refptr<libwebrtc::RTCRtpTransceiver> transceiver) override {}
     void OnAddTrack(std::vector<scoped_refptr<libwebrtc::RTCMediaStream>> streams, scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
     void OnRemoveTrack(scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
-    void OnIceCandidate(scoped_refptr<libwebrtc::RTCIceCandidate> candidate) override {}
+
+    void OnIceCandidate(scoped_refptr<libwebrtc::RTCIceCandidate> candidate) override {
+        if (!gJvm || !peer_ || !candidate) return;
+
+        std::string candidateStr;
+        candidate->ToString(candidateStr);
+        std::string sdpMid = to_std_string(candidate->sdp_mid());
+        int sdpMLineIndex = candidate->sdp_mline_index();
+
+        JNIEnv* env = nullptr;
+        bool attached = false;
+        int stat = gJvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (stat == JNI_EDETACHED) {
+            if (gJvm->AttachCurrentThread((void**)&env, nullptr) != 0) return;
+            attached = true;
+        } else if (stat != JNI_OK || env == nullptr) {
+            return;
+        }
+
+        jclass cls = env->FindClass("com/voicechat/client/native/WebrtcNative");
+        if (!cls) goto done;
+        {
+            jmethodID mid = env->GetStaticMethodID(cls, "onIceCandidate",
+                "(ILjava/lang/String;Ljava/lang/String;I)V");
+            if (!mid) goto done;
+
+            jstring jCandidate = env->NewStringUTF(candidateStr.c_str());
+            jstring jSdpMid = env->NewStringUTF(sdpMid.c_str());
+            env->CallStaticVoidMethod(cls, mid, (jint)peer_->id, jCandidate, jSdpMid, (jint)sdpMLineIndex);
+            env->DeleteLocalRef(jCandidate);
+            env->DeleteLocalRef(jSdpMid);
+        }
+    done:
+        if (cls) env->DeleteLocalRef(cls);
+        if (attached) gJvm->DetachCurrentThread();
+    }
 
 private:
     std::shared_ptr<AudioManager::Peer> peer_;
@@ -205,18 +243,25 @@ std::string AudioManager::createOffer(int peerId) {
     }
     auto prom = std::make_shared<std::promise<std::string>>();
     auto fut = prom->get_future();
-    // vendor API: CreateOffer(OnSdpCreateSuccess, OnSdpCreateFailure, constraints)
     peer->pc->CreateOffer(
-        [prom](auto sdp, auto type) mutable {
-            // convert vendor portable/string-like to std::string
-            prom->set_value(to_std_string(sdp));
+        [prom, pc = peer->pc](auto sdp, auto type) mutable {
+            std::string sdpStr = to_std_string(sdp);
+            std::string typeStr = to_std_string(type);
+            pc->SetLocalDescription(sdpStr, typeStr,
+                []() {},
+                [](const char* err) {
+                    std::cerr << "AudioManager: SetLocalDescription(offer) failed: " << (err ? err : "") << std::endl;
+                }
+            );
+            prom->set_value(sdpStr);
         },
-        [](const char* err) {
+        [prom](const char* err) {
             std::cerr << "AudioManager: CreateOffer failed: " << (err ? err : "") << std::endl;
+            prom->set_value(std::string());
         },
         nullptr
     );
-    if (fut.wait_for(5s) == std::future_status::ready) {
+    if (fut.wait_for(10s) == std::future_status::ready) {
         return fut.get();
     }
     std::cerr << "AudioManager: createOffer timed out" << std::endl;
@@ -234,15 +279,24 @@ std::string AudioManager::createAnswer(int peerId) {
     auto prom = std::make_shared<std::promise<std::string>>();
     auto fut = prom->get_future();
     peer->pc->CreateAnswer(
-        [prom](auto sdp, auto type) mutable {
-            prom->set_value(to_std_string(sdp));
+        [prom, pc = peer->pc](auto sdp, auto type) mutable {
+            std::string sdpStr = to_std_string(sdp);
+            std::string typeStr = to_std_string(type);
+            pc->SetLocalDescription(sdpStr, typeStr,
+                []() {},
+                [](const char* err) {
+                    std::cerr << "AudioManager: SetLocalDescription(answer) failed: " << (err ? err : "") << std::endl;
+                }
+            );
+            prom->set_value(sdpStr);
         },
-        [](const char* err) {
+        [prom](const char* err) {
             std::cerr << "AudioManager: CreateAnswer failed: " << (err ? err : "") << std::endl;
+            prom->set_value(std::string());
         },
         nullptr
     );
-    if (fut.wait_for(5s) == std::future_status::ready) {
+    if (fut.wait_for(10s) == std::future_status::ready) {
         return fut.get();
     }
     std::cerr << "AudioManager: createAnswer timed out" << std::endl;

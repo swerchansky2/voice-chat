@@ -65,11 +65,5 @@ class Room(val roomId: String) {
         }
     }
 
-    fun updateUdpAddress(userId: String, address: java.net.InetSocketAddress) {
-        val user = users[userId]
-        user?.udpAddress = address
-        logger.info { "[Room] Updated UDP address for \"${user?.nickname ?: userId}\": $address" }
-    }
-
     fun size(): Int = users.size
 }

@@ -46,11 +46,10 @@ class SignalingClient {
         data object Connected : Event()
         data object Disconnected : Event()
         data class Joined(val userId: String) : Event()
-        data class UserList(val users: List<String>) : Event()
-        data class UserJoined(val nickname: String) : Event()
-        data class UserLeft(val nickname: String) : Event()
+        data class UserList(val users: List<com.voicechat.shared.protocol.UserInfo>) : Event()
+        data class UserJoined(val nickname: String, val userId: String) : Event()
+        data class UserLeft(val nickname: String, val userId: String) : Event()
         data class Error(val message: String) : Event()
-        // WebRTC signaling events
         data class OfferReceived(val from: String, val sdp: String) : Event()
         data class AnswerReceived(val from: String, val sdp: String) : Event()
         data class IceCandidateReceived(val from: String, val candidate: String, val sdpMid: String, val sdpMLineIndex: Int) : Event()
@@ -120,12 +119,12 @@ class SignalingClient {
                     _events.emit(Event.UserList(message.users))
                 }
                 is SignalMessage.UserJoined -> {
-                    logger.info { "[WS] Received UserJoined — \"${message.nickname}\"" }
-                    _events.emit(Event.UserJoined(message.nickname))
+                    logger.info { "[WS] Received UserJoined — \"${message.nickname}\" (${message.userId})" }
+                    _events.emit(Event.UserJoined(message.nickname, message.userId))
                 }
                 is SignalMessage.UserLeft -> {
-                    logger.info { "[WS] Received UserLeft — \"${message.nickname}\"" }
-                    _events.emit(Event.UserLeft(message.nickname))
+                    logger.info { "[WS] Received UserLeft — \"${message.nickname}\" (${message.userId})" }
+                    _events.emit(Event.UserLeft(message.nickname, message.userId))
                 }
                 is SignalMessage.Error -> {
                     logger.warn { "[WS] Received Error — ${message.message}" }
@@ -168,12 +167,6 @@ class SignalingClient {
         session?.sendSignalMessage(msg)
     }
 
-
-    suspend fun registerUdp(port: Int) {
-        val message = SignalMessage.RegisterUdp(port)
-        logger.info { "[WS] Registered UDP port $port with server" }
-        session?.sendSignalMessage(message)
-    }
 
     suspend fun disconnect() {
         try {

@@ -1,7 +1,6 @@
 package com.voicechat.client.viewmodel
 
 import com.voicechat.client.network.SignalingClient
-import com.voicechat.client.network.UdpAudioClient
 import com.voicechat.client.audio.AudioEngine
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +23,6 @@ sealed class ConnectionState {
 
 class VoiceChatViewModel(
     private val signalingClient: SignalingClient,
-    private val udpAudioClient: UdpAudioClient,
     private val audioEngine: AudioEngine
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -43,76 +41,121 @@ class VoiceChatViewModel(
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
-    private var currentHost: String? = null
 
-    // Map remote user id -> native peerId
+    // userId <-> native peerId mapping
     private val peerMap = mutableMapOf<String, Int>()
+    private val reversePeerMap = mutableMapOf<Int, String>()
+
     private val webRtc = WebrtcNative()
     private var webRtcInitialized = false
+
     init {
-        // register native -> Kotlin callback for remote audio frames
-        WebrtcNative.setRemoteAudioCallback { peerId, pcm ->
-            // forward to audio engine for playback
+        WebrtcNative.setRemoteAudioCallback { _, pcm ->
             audioEngine.playRemotePcm(pcm)
+        }
+
+        WebrtcNative.setIceCandidateCallback { peerId, candidate, sdpMid, sdpMLineIndex ->
+            val targetUserId = reversePeerMap[peerId] ?: return@setIceCandidateCallback
+            scope.launch {
+                logger.debug { "[VM] Sending local ICE candidate to $targetUserId" }
+                signalingClient.sendIceCandidate(targetUserId, candidate, sdpMid, sdpMLineIndex)
+            }
+        }
+
+        observeSignalingEvents()
+    }
+
+    private fun ensureWebRtcInitialized(): Boolean {
+        if (webRtcInitialized) return true
+        return try {
+            webRtc.initializeScreenshare()
+            webRtcInitialized = true
+            true
+        } catch (t: Throwable) {
+            logger.error(t) { "[VM] Failed to initialize native WebRTC" }
+            false
         }
     }
 
-    init {
-        observeSignalingEvents()
-        observeAudioPackets()
+    private fun setupAudioRouting() {
+        audioEngine.sendRawFrame = { pcm ->
+            val frames = pcm.size / 2
+            for (p in peerMap.values.toList()) {
+                try {
+                    webRtc.sendAudioFrame(p, pcm, 16, 48000, 1, frames)
+                } catch (t: Throwable) {
+                    logger.error(t) { "[VM] Failed to send audio frame to native peer=$p" }
+                }
+            }
+        }
     }
 
     private fun observeSignalingEvents() {
         scope.launch {
             signalingClient.events.collect { event ->
                 when (event) {
-                    is SignalingClient.Event.Connected -> {
-                        // Connection established, waiting for Joined
-                    }
+                    is SignalingClient.Event.Connected -> {}
+
                     is SignalingClient.Event.Disconnected -> {
                         logger.info { "[VM] Disconnected from server" }
+                        cleanupAllPeers()
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
                         audioEngine.stop()
-                        udpAudioClient.stop()
                     }
+
                     is SignalingClient.Event.Joined -> {
                         logger.info { "[VM] Joined room — userId=${event.userId}, nickname=$currentNickname" }
                         currentUserId = event.userId
                         _connectionState.value = ConnectionState.Connected
 
-                        // Start UDP client and register
-                        val udpPort = udpAudioClient.start(currentHost!!)
-                        signalingClient.registerUdp(udpPort)
+                        if (!ensureWebRtcInitialized()) {
+                            _errorMessage.value = "Failed to initialize WebRTC"
+                            return@collect
+                        }
 
-                        // Start audio engine
+                        setupAudioRouting()
                         audioEngine.start(event.userId)
                     }
+
                     is SignalingClient.Event.UserList -> {
-                        logger.info { "[VM] User list: ${event.users}" }
-                        _userList.value = event.users
+                        val nicknames = event.users.map { it.nickname }
+                        logger.info { "[VM] User list: $nicknames" }
+                        _userList.value = nicknames
+
+                        // Existing users will send us offers when they receive UserJoined,
+                        // so we don't initiate connections here — just wait.
                     }
+
                     is SignalingClient.Event.UserJoined -> {
-                        logger.info { "[VM] User joined: \"${event.nickname}\"" }
+                        logger.info { "[VM] User joined: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value + event.nickname
+
+                        // We (existing user) initiate WebRTC connection to the newcomer
+                        initiateConnection(event.userId)
                     }
+
                     is SignalingClient.Event.UserLeft -> {
-                        logger.info { "[VM] User left: \"${event.nickname}\"" }
+                        logger.info { "[VM] User left: \"${event.nickname}\" (${event.userId})" }
                         _userList.value = _userList.value - event.nickname
-                        // TODO: if we had mapping from nickname->userId, remove peerMap entries here
+                        closePeer(event.userId)
                     }
+
                     is SignalingClient.Event.OfferReceived -> {
                         logger.info { "[VM] Incoming offer from=${event.from}" }
                         handleIncomingOffer(event.from, event.sdp)
                     }
+
                     is SignalingClient.Event.AnswerReceived -> {
                         logger.info { "[VM] Incoming answer from=${event.from}" }
                         handleIncomingAnswer(event.from, event.sdp)
                     }
+
                     is SignalingClient.Event.IceCandidateReceived -> {
                         logger.info { "[VM] Incoming ICE from=${event.from}" }
                         handleIncomingIce(event.from, event.candidate, event.sdpMid, event.sdpMLineIndex)
                     }
+
                     is SignalingClient.Event.Error -> {
                         logger.error { "[VM] Error: ${event.message}" }
                         _errorMessage.value = event.message
@@ -123,12 +166,94 @@ class VoiceChatViewModel(
         }
     }
 
-    private fun observeAudioPackets() {
-        scope.launch {
-            udpAudioClient.receivedPackets.collect { packet ->
-                audioEngine.receiveAudio(packet.sequenceNumber, packet.audioData)
+    private suspend fun initiateConnection(targetUserId: String) {
+        if (!ensureWebRtcInitialized()) return
+
+        val peerId = webRtc.createPeerConnection()
+        if (peerId < 0) {
+            logger.error { "[VM] Failed to create peer connection for $targetUserId" }
+            return
+        }
+        peerMap[targetUserId] = peerId
+        reversePeerMap[peerId] = targetUserId
+
+        webRtc.addLocalAudioTrack(peerId, currentUserId ?: "local")
+
+        val sdp = webRtc.createOffer(peerId)
+        if (sdp.isNullOrEmpty()) {
+            logger.error { "[VM] createOffer returned empty SDP for $targetUserId" }
+            closePeer(targetUserId)
+            return
+        }
+
+        logger.info { "[VM] Sending offer to $targetUserId" }
+        signalingClient.sendOffer(targetUserId, sdp)
+    }
+
+    private suspend fun handleIncomingOffer(fromUserId: String, sdp: String) {
+        if (!ensureWebRtcInitialized()) return
+
+        val peerId = webRtc.createPeerConnection()
+        if (peerId < 0) {
+            logger.error { "[VM] Failed to create peer connection for incoming offer from $fromUserId" }
+            return
+        }
+        peerMap[fromUserId] = peerId
+        reversePeerMap[peerId] = fromUserId
+
+        webRtc.addLocalAudioTrack(peerId, currentUserId ?: "local")
+
+        webRtc.applyRemoteDescription(peerId, sdp, "offer")
+
+        val answer = webRtc.createAnswer(peerId)
+        if (answer.isNullOrEmpty()) {
+            logger.error { "[VM] createAnswer returned empty SDP for $fromUserId" }
+            closePeer(fromUserId)
+            return
+        }
+
+        logger.info { "[VM] Sending answer to $fromUserId" }
+        signalingClient.sendAnswer(fromUserId, answer)
+    }
+
+    private fun handleIncomingAnswer(fromUserId: String, sdp: String) {
+        val peerId = peerMap[fromUserId]
+        if (peerId == null) {
+            logger.warn { "[VM] Received answer for unknown peer from=$fromUserId" }
+            return
+        }
+        webRtc.applyRemoteDescription(peerId, sdp, "answer")
+    }
+
+    private fun handleIncomingIce(fromUserId: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) {
+        val peerId = peerMap[fromUserId]
+        if (peerId == null) {
+            logger.warn { "[VM] Received ICE for unknown peer from=$fromUserId" }
+            return
+        }
+        webRtc.addIceCandidate(peerId, candidate, sdpMid, sdpMLineIndex)
+    }
+
+    private fun closePeer(userId: String) {
+        val peerId = peerMap.remove(userId) ?: return
+        reversePeerMap.remove(peerId)
+        try {
+            webRtc.closePeerConnection(peerId)
+        } catch (t: Throwable) {
+            logger.error(t) { "[VM] Error closing peer connection for $userId" }
+        }
+    }
+
+    private fun cleanupAllPeers() {
+        for ((_, peerId) in peerMap) {
+            try {
+                webRtc.closePeerConnection(peerId)
+            } catch (t: Throwable) {
+                logger.error(t) { "[VM] Error closing peer $peerId" }
             }
         }
+        peerMap.clear()
+        reversePeerMap.clear()
     }
 
     fun connect(nickname: String, host: String, port: Int) {
@@ -138,7 +263,6 @@ class VoiceChatViewModel(
         }
 
         currentNickname = nickname
-        currentHost = host
         _connectionState.value = ConnectionState.Connecting
         _errorMessage.value = null
 
@@ -158,14 +282,13 @@ class VoiceChatViewModel(
     fun disconnect() {
         scope.launch {
             logger.info { "[VM] Disconnecting" }
-            signalingClient.disconnect()
-            udpAudioClient.stop()
+            cleanupAllPeers()
             audioEngine.stop()
+            signalingClient.disconnect()
             _connectionState.value = ConnectionState.Disconnected
             _userList.value = emptyList()
             currentUserId = null
             currentNickname = null
-            currentHost = null
         }
     }
 
@@ -178,99 +301,5 @@ class VoiceChatViewModel(
 
     fun clearError() {
         _errorMessage.value = null
-    }
-
-    // High-level call control (basic P2P WebRTC audio)
-    fun callUser(targetUserId: String) {
-        scope.launch {
-            if (!webRtcInitialized) {
-                try {
-                    webRtc.initializeScreenshare()
-                } catch (t: Throwable) {
-                    logger.error(t) { "Failed to initialize native WebRTC" }
-                    return@launch
-                }
-                webRtcInitialized = true
-            }
-
-            val peerId = webRtc.createPeerConnection()
-            if (peerId < 0) {
-                logger.error { "Failed to create native peer connection" }
-                return@launch
-            }
-            peerMap[targetUserId] = peerId
-
-            // Route captured PCM to native for all active peers
-            audioEngine.sendRawFrame = { pcm ->
-                // pcm is a ByteArray of 16-bit little-endian samples
-                val frames = pcm.size / 2 // 2 bytes per sample (mono)
-                for (p in peerMap.values) {
-                    try {
-                        webRtc.sendAudioFrame(p, pcm, 16, 48000, 1, frames)
-                    } catch (t: Throwable) {
-                        logger.error(t) { "Failed to send audio frame to native peer=$p" }
-                    }
-                }
-            }
-
-            // Add a local audio track (uses native audio capture or generator)
-            webRtc.addLocalAudioTrack(peerId, currentUserId ?: "local")
-            webRtc.startAudioGenerator(peerId)
-
-            // Create offer and send to remote
-            val sdp = webRtc.createOffer(peerId)
-            signalingClient.sendOffer(targetUserId, sdp)
-        }
-    }
-
-    private fun handleIncomingOffer(fromUserId: String, sdp: String) {
-        scope.launch {
-            if (!webRtcInitialized) {
-                try {
-                    webRtc.initializeScreenshare()
-                } catch (t: Throwable) {
-                    logger.error(t) { "Failed to initialize native WebRTC" }
-                    return@launch
-                }
-                webRtcInitialized = true
-            }
-
-            val peerId = webRtc.createPeerConnection()
-            if (peerId < 0) {
-                logger.error { "Failed to create native peer connection for incoming offer" }
-                return@launch
-            }
-            peerMap[fromUserId] = peerId
-
-            webRtc.addLocalAudioTrack(peerId, currentUserId ?: "local")
-            webRtc.startAudioGenerator(peerId)
-
-            // Apply remote offer, create answer and send back
-            webRtc.applyRemoteDescription(peerId, sdp, "offer")
-            val answer = webRtc.createAnswer(peerId)
-            signalingClient.sendAnswer(fromUserId, answer)
-        }
-    }
-
-    private fun handleIncomingAnswer(fromUserId: String, sdp: String) {
-        scope.launch {
-            val peerId = peerMap[fromUserId]
-            if (peerId == null) {
-                logger.warn { "Received answer for unknown peer from=$fromUserId" }
-                return@launch
-            }
-            webRtc.applyRemoteDescription(peerId, sdp, "answer")
-        }
-    }
-
-    private fun handleIncomingIce(fromUserId: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) {
-        scope.launch {
-            val peerId = peerMap[fromUserId]
-            if (peerId == null) {
-                logger.warn { "Received ICE for unknown peer from=$fromUserId" }
-                return@launch
-            }
-            webRtc.addIceCandidate(peerId, candidate, sdpMid, sdpMLineIndex)
-        }
     }
 }

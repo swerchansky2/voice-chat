@@ -3,13 +3,13 @@ package com.voicechat.server.websocket
 import com.voicechat.server.room.RoomManager
 import com.voicechat.server.room.UserSession
 import com.voicechat.shared.protocol.SignalMessage
+import com.voicechat.shared.protocol.UserInfo
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
-import java.net.InetSocketAddress
 import java.util.*
 
 private val logger = KotlinLogging.logger("WS")
@@ -85,10 +85,13 @@ class SignalingHandler(private val roomManager: RoomManager) {
 
                 sendMessage(SignalMessage.Joined(userId))
 
-                val userList = room.getAllUsers().map { it.nickname }
+                val userList = room.getAllUsers().map { UserInfo(it.userId, it.nickname) }
                 sendMessage(SignalMessage.UserList(userList))
 
-                room.broadcast(SignalMessage.UserJoined(message.nickname), excludeUserId = userId)
+                room.broadcast(
+                    SignalMessage.UserJoined(nickname = message.nickname, userId = userId),
+                    excludeUserId = userId
+                )
             }
 
             is SignalMessage.Leave -> {
@@ -101,36 +104,15 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 updateSession(null, null, roomId)
             }
 
-            is SignalMessage.RegisterUdp -> {
-                if (currentUserId == null) {
-                    sendMessage(SignalMessage.Error("Not joined"))
-                    return
-                }
-
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
-                    sendMessage(SignalMessage.Error("Room not found"))
-                    return
-                }
-
-                val clientAddress = call.request.local.remoteAddress
-                val udpAddress = InetSocketAddress(clientAddress, message.port)
-                room.updateUdpAddress(currentUserId, udpAddress)
-
-                logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
-            }
-
             is SignalMessage.Offer -> {
                 if (currentUserId == null) {
                     sendMessage(SignalMessage.Error("Not joined"))
                     return
                 }
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
-                // forward to target user
                 room.sendToUser(message.to, SignalMessage.OfferReceived(from = currentUserId, sdp = message.sdp))
             }
 
@@ -139,8 +121,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     sendMessage(SignalMessage.Error("Not joined"))
                     return
                 }
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
@@ -152,12 +133,19 @@ class SignalingHandler(private val roomManager: RoomManager) {
                     sendMessage(SignalMessage.Error("Not joined"))
                     return
                 }
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
+                val room = roomManager.getRoom(roomId) ?: run {
                     sendMessage(SignalMessage.Error("Room not found"))
                     return
                 }
-                room.sendToUser(message.to, SignalMessage.IceCandidateReceived(from = currentUserId, candidate = message.candidate, sdpMid = message.sdpMid, sdpMLineIndex = message.sdpMLineIndex))
+                room.sendToUser(
+                    message.to,
+                    SignalMessage.IceCandidateReceived(
+                        from = currentUserId,
+                        candidate = message.candidate,
+                        sdpMid = message.sdpMid,
+                        sdpMLineIndex = message.sdpMLineIndex
+                    )
+                )
             }
 
             else -> {
@@ -171,7 +159,7 @@ class SignalingHandler(private val roomManager: RoomManager) {
         val userSession = room.removeUser(userId)
 
         userSession?.let {
-            room.broadcast(SignalMessage.UserLeft(it.nickname))
+            room.broadcast(SignalMessage.UserLeft(nickname = it.nickname, userId = userId))
             roomManager.removeRoomIfEmpty(roomId)
             logger.info { "[WS] User \"${it.nickname}\" ($userId) disconnected" }
         }
