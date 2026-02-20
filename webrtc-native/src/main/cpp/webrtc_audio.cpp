@@ -99,7 +99,8 @@ public:
 
     void OnAddStream(scoped_refptr<libwebrtc::RTCMediaStream> stream) override {
         auto audio_tracks = stream->audio_tracks();
-        for (auto& track : audio_tracks) {
+        for (size_t i = 0; i < audio_tracks.size(); ++i) {
+            auto& track = audio_tracks[i];
             auto sink = std::make_unique<JavaAudioSink>(peer_ ? peer_->id : 0);
             track->AddSink(sink.get());
             if (peer_) {
@@ -119,15 +120,16 @@ public:
     void OnIceConnectionState(libwebrtc::RTCIceConnectionState state) override {}
     void OnSignalingState(libwebrtc::RTCSignalingState state) override {}
     void OnTrack(scoped_refptr<libwebrtc::RTCRtpTransceiver> transceiver) override {}
-    void OnAddTrack(std::vector<scoped_refptr<libwebrtc::RTCMediaStream>> streams, scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
+    void OnAddTrack(libwebrtc::vector<scoped_refptr<libwebrtc::RTCMediaStream>> streams, scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
     void OnRemoveTrack(scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
 
     void OnIceCandidate(scoped_refptr<libwebrtc::RTCIceCandidate> candidate) override {
         if (!gJvm || !peer_ || !candidate) return;
 
-        std::string candidateStr;
-        candidate->ToString(candidateStr);
-        std::string sdpMid = to_std_string(candidate->sdp_mid());
+        libwebrtc::string candidateOut;
+        candidate->ToString(candidateOut);
+        std::string candidateStr = candidateOut.std_string();
+        std::string sdpMid = candidate->sdp_mid().std_string();
         int sdpMLineIndex = candidate->sdp_mline_index();
 
         JNIEnv* env = nullptr;
