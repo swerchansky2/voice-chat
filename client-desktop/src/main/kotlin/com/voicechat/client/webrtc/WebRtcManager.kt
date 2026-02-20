@@ -16,6 +16,7 @@ class WebRtcManager(
     private var peerConnection: RTCPeerConnection? = null
     private var audioSource: AudioTrackSource? = null
     private var audioTrack: AudioTrack? = null
+    private var disposed = false
 
     fun initialize() {
         factory = PeerConnectionFactory()
@@ -23,7 +24,7 @@ class WebRtcManager(
     }
 
     fun handleOffer(sdp: String) {
-        val f = factory ?: run {
+        if (factory == null) {
             logger.error { "[WebRTC] Factory not initialized" }
             return
         }
@@ -31,6 +32,7 @@ class WebRtcManager(
         if (peerConnection != null) {
             logger.warn { "[WebRTC] PeerConnection already exists, closing old one" }
             dispose()
+            disposed = false
             factory = PeerConnectionFactory()
         }
 
@@ -73,15 +75,11 @@ class WebRtcManager(
 
         val pc = peerConnection ?: return
 
-        val init = RTCRtpTransceiverInit().apply {
-            direction = RTCRtpTransceiverDirection.SEND_RECV
-        }
-        pc.addTransceiver(audioTrack, init)
-
         val offerDesc = RTCSessionDescription(RTCSdpType.OFFER, sdp)
         pc.setRemoteDescription(offerDesc, object : SetSessionDescriptionObserver {
             override fun onSuccess() {
                 logger.info { "[WebRTC] Remote description (offer) set" }
+                pc.addTrack(audioTrack, listOf("stream0"))
                 createAnswer()
             }
 
@@ -125,9 +123,18 @@ class WebRtcManager(
     }
 
     fun dispose() {
-        peerConnection?.close()
-        audioTrack?.dispose()
-        factory?.dispose()
+        if (disposed) return
+        disposed = true
+
+        try { peerConnection?.close() } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] Error closing PeerConnection" }
+        }
+        try { audioTrack?.dispose() } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] Error disposing AudioTrack" }
+        }
+        try { factory?.dispose() } catch (e: Exception) {
+            logger.warn(e) { "[WebRTC] Error disposing factory" }
+        }
         peerConnection = null
         audioTrack = null
         audioSource = null
