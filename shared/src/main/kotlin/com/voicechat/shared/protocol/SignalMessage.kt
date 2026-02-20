@@ -49,4 +49,20 @@ sealed class SignalMessage {
         val sdpMid: String?,
         val sdpMLineIndex: Int
     ) : SignalMessage()
+
+    @Serializable
+    @SerialName("start_screen_share")
+    data object StartScreenShare : SignalMessage()
+
+    @Serializable
+    @SerialName("stop_screen_share")
+    data object StopScreenShare : SignalMessage()
+
+    @Serializable
+    @SerialName("screen_share_started")
+    data class ScreenShareStarted(val nickname: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("screen_share_stopped")
+    data object ScreenShareStopped : SignalMessage()
 }

@@ -1,7 +1,10 @@
 package com.voicechat.client.viewmodel
 
+import androidx.compose.ui.graphics.ImageBitmap
 import com.voicechat.client.network.SignalingClient
+import com.voicechat.client.webrtc.VideoFrameConverter
 import com.voicechat.client.webrtc.WebRtcManager
+import dev.onvoid.webrtc.media.video.desktop.DesktopSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +23,12 @@ sealed class ConnectionState {
     data class Error(val message: String) : ConnectionState()
 }
 
+data class ScreenShareState(
+    val active: Boolean = false,
+    val sharerNickname: String? = null,
+    val isSelf: Boolean = false
+)
+
 class VoiceChatViewModel(
     private val signalingClient: SignalingClient
 ) {
@@ -36,6 +45,12 @@ class VoiceChatViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _screenShareState = MutableStateFlow(ScreenShareState())
+    val screenShareState: StateFlow<ScreenShareState> = _screenShareState.asStateFlow()
+
+    private val _currentVideoFrame = MutableStateFlow<ImageBitmap?>(null)
+    val currentVideoFrame: StateFlow<ImageBitmap?> = _currentVideoFrame.asStateFlow()
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
@@ -54,6 +69,8 @@ class VoiceChatViewModel(
                         logger.info { "[VM] Disconnected from server" }
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
+                        _screenShareState.value = ScreenShareState()
+                        _currentVideoFrame.value = null
                         webRtcManager?.dispose()
                         webRtcManager = null
                     }
@@ -76,6 +93,12 @@ class VoiceChatViewModel(
                                 scope.launch {
                                     signalingClient.sendAnswer(sdp)
                                 }
+                            },
+                            onRemoteVideoFrame = { frame ->
+                                _currentVideoFrame.value = VideoFrameConverter.toImageBitmap(frame)
+                            },
+                            onRemoteVideoEnded = {
+                                _currentVideoFrame.value = null
                             }
                         )
                         manager.initialize()
@@ -106,6 +129,19 @@ class VoiceChatViewModel(
                         webRtcManager?.handleIceCandidate(
                             event.candidate, event.sdpMid, event.sdpMLineIndex
                         )
+                    }
+                    is SignalingClient.Event.ScreenShareStarted -> {
+                        logger.info { "[VM] Screen share started by \"${event.nickname}\"" }
+                        _screenShareState.value = ScreenShareState(
+                            active = true,
+                            sharerNickname = event.nickname,
+                            isSelf = event.nickname == currentNickname
+                        )
+                    }
+                    is SignalingClient.Event.ScreenShareStopped -> {
+                        logger.info { "[VM] Screen share stopped" }
+                        _screenShareState.value = ScreenShareState()
+                        _currentVideoFrame.value = null
                     }
                 }
             }
@@ -138,11 +174,16 @@ class VoiceChatViewModel(
     fun disconnect() {
         scope.launch {
             logger.info { "[VM] Disconnecting" }
+            if (_screenShareState.value.isSelf) {
+                webRtcManager?.stopScreenShare()
+            }
             signalingClient.disconnect()
             webRtcManager?.dispose()
             webRtcManager = null
             _connectionState.value = ConnectionState.Disconnected
             _userList.value = emptyList()
+            _screenShareState.value = ScreenShareState()
+            _currentVideoFrame.value = null
             currentUserId = null
             currentNickname = null
         }
@@ -153,6 +194,35 @@ class VoiceChatViewModel(
         _isMuted.value = newMutedState
         webRtcManager?.setMuted(newMutedState)
         logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
+    }
+
+    fun getAvailableScreens(): List<DesktopSource> {
+        return webRtcManager?.getAvailableScreens() ?: emptyList()
+    }
+
+    fun getAvailableWindows(): List<DesktopSource> {
+        return webRtcManager?.getAvailableWindows() ?: emptyList()
+    }
+
+    fun startScreenShare(sourceId: Long, isWindow: Boolean) {
+        if (_screenShareState.value.active) return
+        val manager = webRtcManager ?: return
+
+        manager.startScreenShare(sourceId, isWindow)
+        scope.launch {
+            signalingClient.sendStartScreenShare()
+        }
+        logger.info { "[VM] Starting screen share (sourceId=$sourceId, isWindow=$isWindow)" }
+    }
+
+    fun stopScreenShare() {
+        val manager = webRtcManager ?: return
+        manager.stopScreenShare()
+        scope.launch {
+            signalingClient.sendStopScreenShare()
+        }
+        _screenShareState.value = ScreenShareState()
+        logger.info { "[VM] Stopping screen share" }
     }
 
     fun clearError() {

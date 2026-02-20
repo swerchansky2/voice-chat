@@ -14,7 +14,10 @@ import com.voicechat.client.ui.theme.AppColors
 @Composable
 fun ControlPanel(
     isMuted: Boolean,
+    isScreenSharing: Boolean,
+    screenShareActive: Boolean,
     onToggleMute: () -> Unit,
+    onToggleScreenShare: () -> Unit,
     onDisconnect: () -> Unit
 ) {
     Row(
@@ -35,6 +38,25 @@ fun ControlPanel(
         ) {
             Text(
                 text = if (isMuted) "Unmute" else "Mute",
+                fontSize = 16.sp
+            )
+        }
+
+        Button(
+            onClick = onToggleScreenShare,
+            enabled = !screenShareActive || isScreenSharing,
+            modifier = Modifier
+                .weight(1f)
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isScreenSharing) AppColors.Success else AppColors.Accent,
+                contentColor = Color.White,
+                disabledContainerColor = AppColors.TextSecondary,
+                disabledContentColor = Color.White.copy(alpha = 0.5f)
+            )
+        ) {
+            Text(
+                text = if (isScreenSharing) "Stop Share" else "Share Screen",
                 fontSize = 16.sp
             )
         }

@@ -5,6 +5,9 @@ import dev.onvoid.webrtc.media.MediaStream
 import dev.onvoid.webrtc.media.audio.AudioTrack
 import dev.onvoid.webrtc.media.audio.AudioTrackSink
 import dev.onvoid.webrtc.media.audio.CustomAudioSource
+import dev.onvoid.webrtc.media.video.VideoTrack
+import dev.onvoid.webrtc.media.video.VideoTrackSink
+import dev.onvoid.webrtc.media.video.CustomVideoSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 
 private val logger = KotlinLogging.logger("UserMedia")
@@ -16,10 +19,14 @@ class UserMediaSession(
     private val iceCandidateCallback: (RTCIceCandidate) -> Unit,
     private val offerCallback: (String) -> Unit
 ) {
-    private val sendSource = CustomAudioSource()
-    private var sendTrack: AudioTrack? = null
+    private val audioSendSource = CustomAudioSource()
+    private var audioSendTrack: AudioTrack? = null
     private var receiveTrackSink: AudioTrackSink? = null
     private var peerConnection: RTCPeerConnection? = null
+
+    private var videoSendSource: CustomVideoSource? = null
+    private var videoSendTrack: VideoTrack? = null
+    private var videoReceiveSink: VideoTrackSink? = null
 
     fun start() {
         val config = RTCConfiguration().apply {
@@ -44,28 +51,34 @@ class UserMediaSession(
 
             override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {
                 val track = receiver.track
-                if (track is AudioTrack) {
-                    logger.info { "[UserMedia:$userId] Received remote audio track" }
-                    val sink = AudioTrackSink { data, bitsPerSample, sampleRate, channels, frames ->
-                        audioMixer.pushAudioFrame(userId, data)
+                when (track) {
+                    is AudioTrack -> {
+                        logger.info { "[UserMedia:$userId] Received remote audio track" }
+                        val sink = AudioTrackSink { data, bitsPerSample, sampleRate, channels, frames ->
+                            audioMixer.pushAudioFrame(userId, data)
+                        }
+                        receiveTrackSink = sink
+                        track.addSink(sink)
                     }
-                    receiveTrackSink = sink
-                    track.addSink(sink)
+                    is VideoTrack -> {
+                        logger.info { "[UserMedia:$userId] Received remote video track" }
+                        onVideoTrackReceived?.invoke(track)
+                    }
                 }
             }
         }
 
         peerConnection = factory.createPeerConnection(config, observer)
 
-        sendTrack = factory.createAudioTrack("send-$userId", sendSource)
+        audioSendTrack = factory.createAudioTrack("send-$userId", audioSendSource)
 
         val init = RTCRtpTransceiverInit().apply {
             direction = RTCRtpTransceiverDirection.SEND_RECV
         }
-        peerConnection!!.addTransceiver(sendTrack, init)
+        peerConnection!!.addTransceiver(audioSendTrack, init)
 
         audioMixer.addUser(userId) { mixedAudio ->
-            sendSource.pushAudio(
+            audioSendSource.pushAudio(
                 mixedAudio,
                 AudioMixer.BITS_PER_SAMPLE,
                 AudioMixer.SAMPLE_RATE,
@@ -74,6 +87,48 @@ class UserMediaSession(
             )
         }
 
+        createAndSendOffer()
+    }
+
+    var onVideoTrackReceived: ((VideoTrack) -> Unit)? = null
+
+    fun addVideoSendTransceiver(): CustomVideoSource {
+        val source = CustomVideoSource()
+        videoSendSource = source
+        videoSendTrack = factory.createVideoTrack("video-send-$userId", source)
+
+        val init = RTCRtpTransceiverInit().apply {
+            direction = RTCRtpTransceiverDirection.SEND_ONLY
+        }
+        peerConnection!!.addTransceiver(videoSendTrack, init)
+        logger.info { "[UserMedia:$userId] Added video SEND_ONLY transceiver" }
+        return source
+    }
+
+    fun addVideoRecvTransceiver() {
+        val init = RTCRtpTransceiverInit().apply {
+            direction = RTCRtpTransceiverDirection.RECV_ONLY
+        }
+        peerConnection!!.addTransceiver(init)
+        logger.info { "[UserMedia:$userId] Added video RECV_ONLY transceiver" }
+    }
+
+    fun removeVideoTransceivers() {
+        val pc = peerConnection ?: return
+        for (transceiver in pc.transceivers) {
+            if (transceiver.sender?.track is VideoTrack || transceiver.receiver?.track is VideoTrack) {
+                transceiver.direction = RTCRtpTransceiverDirection.INACTIVE
+            }
+        }
+        try { videoSendTrack?.dispose() } catch (_: Exception) {}
+        try { videoSendSource?.dispose() } catch (_: Exception) {}
+        videoSendTrack = null
+        videoSendSource = null
+        videoReceiveSink = null
+        logger.info { "[UserMedia:$userId] Video transceivers set to INACTIVE" }
+    }
+
+    fun renegotiate() {
         createAndSendOffer()
     }
 
@@ -120,12 +175,18 @@ class UserMediaSession(
 
     fun dispose() {
         audioMixer.removeUser(userId)
-        peerConnection?.close()
-        sendTrack?.dispose()
-        sendSource.dispose()
+        try { peerConnection?.close() } catch (_: Exception) {}
+        try { audioSendTrack?.dispose() } catch (_: Exception) {}
+        try { audioSendSource.dispose() } catch (_: Exception) {}
+        try { videoSendTrack?.dispose() } catch (_: Exception) {}
+        try { videoSendSource?.dispose() } catch (_: Exception) {}
         peerConnection = null
-        sendTrack = null
+        audioSendTrack = null
         receiveTrackSink = null
+        videoSendTrack = null
+        videoSendSource = null
+        videoReceiveSink = null
+        onVideoTrackReceived = null
         logger.info { "[UserMedia:$userId] Disposed" }
     }
 }

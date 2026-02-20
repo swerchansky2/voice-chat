@@ -56,6 +56,8 @@ class SignalingClient {
             val sdpMid: String?,
             val sdpMLineIndex: Int
         ) : Event()
+        data class ScreenShareStarted(val nickname: String) : Event()
+        data object ScreenShareStopped : Event()
     }
 
     private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
@@ -141,6 +143,14 @@ class SignalingClient {
                         message.candidate, message.sdpMid, message.sdpMLineIndex
                     ))
                 }
+                is SignalMessage.ScreenShareStarted -> {
+                    logger.info { "[WS] Screen share started by \"${message.nickname}\"" }
+                    _events.emit(Event.ScreenShareStarted(message.nickname))
+                }
+                is SignalMessage.ScreenShareStopped -> {
+                    logger.info { "[WS] Screen share stopped" }
+                    _events.emit(Event.ScreenShareStopped)
+                }
                 else -> {
                     logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
                 }
@@ -158,6 +168,14 @@ class SignalingClient {
         session?.sendSignalMessage(
             SignalMessage.WebRtcIceCandidate(candidate, sdpMid, sdpMLineIndex)
         )
+    }
+
+    suspend fun sendStartScreenShare() {
+        session?.sendSignalMessage(SignalMessage.StartScreenShare)
+    }
+
+    suspend fun sendStopScreenShare() {
+        session?.sendSignalMessage(SignalMessage.StopScreenShare)
     }
 
     suspend fun disconnect() {

@@ -144,6 +144,32 @@ class SignalingHandler(
                 )
             }
 
+            is SignalMessage.StartScreenShare -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                if (sfuManager.currentSharerId != null) {
+                    sendMessage(SignalMessage.Error("Screen share already active"))
+                    return
+                }
+                sfuManager.startScreenShare(currentUserId)
+                val room = roomManager.getRoom(roomId) ?: return
+                room.broadcast(SignalMessage.ScreenShareStarted(currentNickname ?: ""))
+                logger.info { "[WS] User \"$currentNickname\" started screen share" }
+            }
+
+            is SignalMessage.StopScreenShare -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                sfuManager.stopScreenShare(currentUserId)
+                val room = roomManager.getRoom(roomId) ?: return
+                room.broadcast(SignalMessage.ScreenShareStopped)
+                logger.info { "[WS] User \"$currentNickname\" stopped screen share" }
+            }
+
             else -> {
                 logger.warn { "[WS] Unexpected message type: ${message::class.simpleName} from ${currentNickname ?: "unknown"}" }
             }
@@ -151,6 +177,12 @@ class SignalingHandler(
     }
 
     private suspend fun DefaultWebSocketServerSession.handleDisconnect(userId: String, nickname: String?, roomId: String) {
+        if (sfuManager.currentSharerId == userId) {
+            sfuManager.stopScreenShare(userId)
+            val room = roomManager.getRoom(roomId)
+            room?.broadcast(SignalMessage.ScreenShareStopped)
+        }
+
         sfuManager.removeSession(userId)
 
         val room = roomManager.getRoom(roomId) ?: return
