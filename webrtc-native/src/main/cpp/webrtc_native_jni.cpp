@@ -2,6 +2,23 @@
 #include <string>
 #include "webrtc_audio.h"
 
+// store JVM pointer for callbacks
+JavaVM* gJvm = nullptr;
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    gJvm = vm;
+    // also inform C++ audio sink about JVM
+    // webrtc_audio.cpp has its own gJvm variable; set via extern
+    return JNI_VERSION_1_6;
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_com_voicechat_client_native_WebrtcNative_sendAudioFrame(JNIEnv* env, jobject thiz, jint peerId, jbyteArray pcm_, jint bitsPerSample, jint sampleRate, jint channels, jint frames) {
+    const jbyte* pcm = pcm_ ? env->GetByteArrayElements(pcm_, NULL) : NULL;
+    int res = AudioManager::instance().pushAudioFrame((int)peerId, pcm, (int)bitsPerSample, (int)sampleRate, (int)channels, (int)frames);
+    if (pcm) env->ReleaseByteArrayElements(pcm_, const_cast<jbyte*>(pcm), 0);
+    return res;
+}
+
 extern "C" JNIEXPORT jint JNICALL Java_com_voicechat_client_native_WebrtcNative_initializeScreenshare(JNIEnv* env, jobject thiz) {
     return AudioManager::instance().initialize();
 }

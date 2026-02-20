@@ -50,6 +50,10 @@ class SignalingClient {
         data class UserJoined(val nickname: String) : Event()
         data class UserLeft(val nickname: String) : Event()
         data class Error(val message: String) : Event()
+        // WebRTC signaling events
+        data class OfferReceived(val from: String, val sdp: String) : Event()
+        data class AnswerReceived(val from: String, val sdp: String) : Event()
+        data class IceCandidateReceived(val from: String, val candidate: String, val sdpMid: String, val sdpMLineIndex: Int) : Event()
     }
 
     private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
@@ -127,6 +131,18 @@ class SignalingClient {
                     logger.warn { "[WS] Received Error — ${message.message}" }
                     _events.emit(Event.Error(message.message))
                 }
+                is SignalMessage.OfferReceived -> {
+                    logger.info { "[WS] Received Offer from=${message.from}" }
+                    _events.emit(Event.OfferReceived(message.from, message.sdp))
+                }
+                is SignalMessage.AnswerReceived -> {
+                    logger.info { "[WS] Received Answer from=${message.from}" }
+                    _events.emit(Event.AnswerReceived(message.from, message.sdp))
+                }
+                is SignalMessage.IceCandidateReceived -> {
+                    logger.info { "[WS] Received ICE from=${message.from}" }
+                    _events.emit(Event.IceCandidateReceived(message.from, message.candidate, message.sdpMid, message.sdpMLineIndex))
+                }
                 else -> {
                     logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
                 }
@@ -135,6 +151,23 @@ class SignalingClient {
             logger.error(e) { "[WS] Failed to parse message: $text" }
         }
     }
+
+    // Methods to send WebRTC signaling messages
+    suspend fun sendOffer(to: String, sdp: String) {
+        val msg = SignalMessage.Offer(to = to, sdp = sdp)
+        session?.sendSignalMessage(msg)
+    }
+
+    suspend fun sendAnswer(to: String, sdp: String) {
+        val msg = SignalMessage.Answer(to = to, sdp = sdp)
+        session?.sendSignalMessage(msg)
+    }
+
+    suspend fun sendIceCandidate(to: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) {
+        val msg = SignalMessage.IceCandidate(to = to, candidate = candidate, sdpMid = sdpMid, sdpMLineIndex = sdpMLineIndex)
+        session?.sendSignalMessage(msg)
+    }
+
 
     suspend fun registerUdp(port: Int) {
         val message = SignalMessage.RegisterUdp(port)

@@ -37,4 +37,29 @@ sealed class SignalMessage {
     @Serializable
     @SerialName("joined")
     data class Joined(val userId: String) : SignalMessage()
+
+    // --- WebRTC signaling messages ---
+    @Serializable
+    @SerialName("offer")
+    data class Offer(val to: String, val sdp: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("offer_received")
+    data class OfferReceived(val from: String, val sdp: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("answer")
+    data class Answer(val to: String, val sdp: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("answer_received")
+    data class AnswerReceived(val from: String, val sdp: String) : SignalMessage()
+
+    @Serializable
+    @SerialName("ice")
+    data class IceCandidate(val to: String, val candidate: String, val sdpMid: String, val sdpMLineIndex: Int) : SignalMessage()
+
+    @Serializable
+    @SerialName("ice_received")
+    data class IceCandidateReceived(val from: String, val candidate: String, val sdpMid: String, val sdpMLineIndex: Int) : SignalMessage()
 }

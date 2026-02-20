@@ -32,15 +32,22 @@ public:
     // Audio utilities
     int addLocalAudioTrack(int peerId, const std::string& trackId);
     int startAudioGenerator(int peerId); // generates synthetic audio into the RTCAudioSource
+    // Push captured PCM frames (16-bit little-endian) into native audio source for the peer
+    int pushAudioFrame(int peerId, const void* audio_data, int bitsPerSample, int sampleRate, int channels, int frames);
 
 private:
     AudioManager();
     ~AudioManager();
 
     struct Peer {
+        int id = -1;
         libwebrtc::scoped_refptr<libwebrtc::RTCPeerConnection> pc;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioSource> audioSource;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioTrack> audioTrack;
+        // store sinks attached to remote audio tracks so they live as long as peer
+        std::vector<std::unique_ptr<libwebrtc::AudioTrackSink>> audioSinks;
+        // keep observer alive
+        std::unique_ptr<libwebrtc::RTCPeerConnectionObserver> observer;
         std::thread audioThread;
         bool audioRunning = false;
     };

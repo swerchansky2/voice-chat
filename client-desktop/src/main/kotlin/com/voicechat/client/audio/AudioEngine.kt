@@ -17,6 +17,8 @@ class AudioEngine(
     private val audioPlayback = AudioPlayback()
     private val opusCodec = OpusCodec()
     private var jitterBuffer: JitterBuffer? = null
+    // Optional callback to send raw PCM frames (used by WebRTC transport)
+    var sendRawFrame: ((ByteArray) -> Unit)? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -37,13 +39,19 @@ class AudioEngine(
             audioCapture.audioData.collect { pcmData ->
                 if (!isMuted && userId != null) {
                     try {
-                        val encodedData = opusCodec.encode(pcmData)
-                        if (encodedData.isNotEmpty()) {
-                            val packet = AudioPacket(userId, sequenceCounter++, encodedData)
-                            udpAudioClient.sendAudioPacket(packet)
+                        val sender = sendRawFrame
+                        if (sender != null) {
+                            // send raw PCM to WebRTC transport
+                            sender.invoke(pcmData)
+                        } else {
+                            val encodedData = opusCodec.encode(pcmData)
+                            if (encodedData.isNotEmpty()) {
+                                val packet = AudioPacket(userId, sequenceCounter++, encodedData)
+                                udpAudioClient.sendAudioPacket(packet)
+                            }
                         }
                     } catch (e: Exception) {
-                        logger.error(e) { "[Audio] Encode error" }
+                        logger.error(e) { "[Audio] Send error" }
                     }
                 }
             }
@@ -63,6 +71,11 @@ class AudioEngine(
 
     fun receiveAudio(sequenceNumber: Int, audioData: ByteArray) {
         jitterBuffer?.put(sequenceNumber, audioData)
+    }
+
+    // Play PCM frames delivered by WebRTC native layer
+    fun playRemotePcm(pcmData: ByteArray) {
+        audioPlayback.playFrame(pcmData)
     }
 
     fun setMuted(muted: Boolean) {

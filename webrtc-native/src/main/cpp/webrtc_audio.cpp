@@ -6,6 +6,10 @@
 #include <cstring>
 #include <type_traits>
 #include <utility>
+#include <jni.h>
+
+// JVM pointer provided by JNI_OnLoad (defined in webrtc_native_jni.cpp)
+extern JavaVM* gJvm;
 
 namespace {
 template<typename T, typename = void>
@@ -45,6 +49,84 @@ AudioManager::AudioManager() {}
 AudioManager::~AudioManager() {
     shutdown();
 }
+
+// Observer that attaches sinks for incoming audio tracks and keeps them alive
+class PeerObserver : public libwebrtc::RTCPeerConnectionObserver {
+public:
+    PeerObserver(std::shared_ptr<AudioManager::Peer> peer) : peer_(peer) {}
+
+    void OnAddStream(scoped_refptr<libwebrtc::RTCMediaStream> stream) override {
+        // attach sinks for each audio track
+        auto audio_tracks = stream->audio_tracks();
+        for (auto& track : audio_tracks) {
+            // create sink and attach
+            auto sink = std::make_unique<JavaAudioSink>(peer_ ? peer_->id : 0);
+            // we can't get peerId easily here; store sink and register via track->AddSink
+            track->AddSink(sink.get());
+            if (peer_) {
+                peer_->audioSinks.push_back(std::move(sink));
+            }
+        }
+    }
+
+    void OnRemoveStream(scoped_refptr<libwebrtc::RTCMediaStream> stream) override {}
+    void OnDataChannel(scoped_refptr<libwebrtc::RTCDataChannel> data_channel) override {}
+    void OnRenegotiationNeeded() override {}
+    void OnPeerConnectionState(libwebrtc::RTCPeerConnectionState state) override {}
+    void OnIceGatheringState(libwebrtc::RTCIceGatheringState state) override {}
+    void OnIceConnectionState(libwebrtc::RTCIceConnectionState state) override {}
+    void OnSignalingState(libwebrtc::RTCSignalingState state) override {}
+    void OnTrack(scoped_refptr<libwebrtc::RTCRtpTransceiver> transceiver) override {}
+    void OnAddTrack(std::vector<scoped_refptr<libwebrtc::RTCMediaStream>> streams, scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
+    void OnRemoveTrack(scoped_refptr<libwebrtc::RTCRtpReceiver> receiver) override {}
+    void OnIceCandidate(scoped_refptr<libwebrtc::RTCIceCandidate> candidate) override {}
+
+private:
+    std::shared_ptr<AudioManager::Peer> peer_;
+};
+
+// Helper: A simple AudioTrackSink implementation that forwards audio frames to Java
+class JavaAudioSink : public libwebrtc::AudioTrackSink {
+public:
+    JavaAudioSink(int peerId) : peerId_(peerId) {}
+
+    void OnData(const void* audio_data, int bits_per_sample, int sample_rate,
+                size_t number_of_channels, size_t number_of_frames) override {
+    // Attach to JVM and call static Java method WebrtcNative.onRemoteAudioFrame(peerId, byte[])
+    if (!gJvm) return;
+        JNIEnv* env = nullptr;
+        bool attached = false;
+        int getEnvStat = gJvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (getEnvStat == JNI_EDETACHED) {
+            if (gJvm->AttachCurrentThread((void**)&env, nullptr) != 0) return;
+            attached = true;
+        } else if (getEnvStat == JNI_EVERSION || env == nullptr) {
+            return;
+        }
+
+        jclass cls = env->FindClass("com/voicechat/client/native/WebrtcNative");
+        if (!cls) goto done;
+
+        jmethodID mid = env->GetStaticMethodID(cls, "onRemoteAudioFrame", "(I[B)V");
+        if (!mid) goto done;
+
+        const size_t bytes = number_of_frames * number_of_channels * (bits_per_sample / 8);
+        jbyteArray arr = env->NewByteArray((jsize)bytes);
+        if (arr) {
+            env->SetByteArrayRegion(arr, 0, (jsize)bytes, reinterpret_cast<const jbyte*>(audio_data));
+            env->CallStaticVoidMethod(cls, mid, (jint)peerId_, arr);
+            env->DeleteLocalRef(arr);
+        }
+
+    done:
+        if (attached) gJvm->DetachCurrentThread();
+    }
+
+private:
+    int peerId_;
+};
+
+
 
 int AudioManager::initialize() {
     std::lock_guard<std::mutex> g(mtx_);
@@ -104,6 +186,10 @@ int AudioManager::createPeerConnection() {
     }
     peer->pc = pc;
     int id = nextPeerId_++;
+    peer->id = id;
+    // attach observer to handle remote streams/tracks
+    peer->observer = std::make_unique<PeerObserver>(peer);
+    peer->pc->RegisterRTCPeerConnectionObserver(peer->observer.get());
     peers_.emplace(id, peer);
     std::cout << "AudioManager: createPeerConnection -> " << id << std::endl;
     return id;
@@ -246,13 +332,27 @@ int AudioManager::startAudioGenerator(int peerId) {
         const int channels = 1;
         const int frame_ms = 10;
         const int frames = sample_rate * frame_ms / 1000;
-        std::vector<int16_t> buffer(frames * channels, 0);
+        std::vector<int16_t> buffer(frames * channels);
         while (*running) {
             // silence (zeros) - or generate tone here
-            //memset(buffer.data(), 0, buffer.size() * sizeof(int16_t));
+            memset(buffer.data(), 0, buffer.size() * sizeof(int16_t));
             src->CaptureFrame(buffer.data(), 16, sample_rate, channels, frames);
             std::this_thread::sleep_for(std::chrono::milliseconds(frame_ms));
         }
     });
+    return 0;
+}
+
+int AudioManager::pushAudioFrame(int peerId, const void* audio_data, int bitsPerSample, int sampleRate, int channels, int frames) {
+    std::shared_ptr<Peer> peer;
+    {
+        std::lock_guard<std::mutex> g(mtx_);
+        auto it = peers_.find(peerId);
+        if (it == peers_.end()) return -1;
+        peer = it->second;
+    }
+    if (!peer->audioSource) return -1;
+    // Forward raw PCM to the RTCAudioSource
+    peer->audioSource->CaptureFrame(audio_data, bitsPerSample, sampleRate, channels, frames);
     return 0;
 }

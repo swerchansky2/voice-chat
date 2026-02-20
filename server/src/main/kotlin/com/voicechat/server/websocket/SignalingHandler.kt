@@ -120,6 +120,46 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
             }
 
+            is SignalMessage.Offer -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId)
+                if (room == null) {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+                // forward to target user
+                room.sendToUser(message.to, SignalMessage.OfferReceived(from = currentUserId, sdp = message.sdp))
+            }
+
+            is SignalMessage.Answer -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId)
+                if (room == null) {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+                room.sendToUser(message.to, SignalMessage.AnswerReceived(from = currentUserId, sdp = message.sdp))
+            }
+
+            is SignalMessage.IceCandidate -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
+                    return
+                }
+                val room = roomManager.getRoom(roomId)
+                if (room == null) {
+                    sendMessage(SignalMessage.Error("Room not found"))
+                    return
+                }
+                room.sendToUser(message.to, SignalMessage.IceCandidateReceived(from = currentUserId, candidate = message.candidate, sdpMid = message.sdpMid, sdpMLineIndex = message.sdpMLineIndex))
+            }
+
             else -> {
                 logger.warn { "[WS] Unexpected message type: ${message::class.simpleName} from ${currentNickname ?: "unknown"}" }
             }
