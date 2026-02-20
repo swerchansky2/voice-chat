@@ -106,10 +106,12 @@ class UserMediaSession(
     }
 
     fun addVideoRecvTransceiver() {
+        val dummySource = CustomVideoSource()
+        val dummyTrack = factory.createVideoTrack("video-recv-$userId", dummySource)
         val init = RTCRtpTransceiverInit().apply {
             direction = RTCRtpTransceiverDirection.RECV_ONLY
         }
-        peerConnection!!.addTransceiver(init)
+        peerConnection!!.addTransceiver(dummyTrack, init)
         logger.info { "[UserMedia:$userId] Added video RECV_ONLY transceiver" }
     }
 
