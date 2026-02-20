@@ -1,8 +1,7 @@
 package com.voicechat.client.viewmodel
 
 import com.voicechat.client.network.SignalingClient
-import com.voicechat.client.network.UdpAudioClient
-import com.voicechat.client.audio.AudioEngine
+import com.voicechat.client.webrtc.WebRtcManager
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,9 +21,7 @@ sealed class ConnectionState {
 }
 
 class VoiceChatViewModel(
-    private val signalingClient: SignalingClient,
-    private val udpAudioClient: UdpAudioClient,
-    private val audioEngine: AudioEngine
+    private val signalingClient: SignalingClient
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -42,38 +39,47 @@ class VoiceChatViewModel(
 
     private var currentUserId: String? = null
     private var currentNickname: String? = null
-    private var currentHost: String? = null
+    private var webRtcManager: WebRtcManager? = null
 
     init {
         observeSignalingEvents()
-        observeAudioPackets()
     }
 
     private fun observeSignalingEvents() {
         scope.launch {
             signalingClient.events.collect { event ->
                 when (event) {
-                    is SignalingClient.Event.Connected -> {
-                        // Connection established, waiting for Joined
-                    }
+                    is SignalingClient.Event.Connected -> {}
                     is SignalingClient.Event.Disconnected -> {
                         logger.info { "[VM] Disconnected from server" }
                         _connectionState.value = ConnectionState.Disconnected
                         _userList.value = emptyList()
-                        audioEngine.stop()
-                        udpAudioClient.stop()
+                        webRtcManager?.dispose()
+                        webRtcManager = null
                     }
                     is SignalingClient.Event.Joined -> {
                         logger.info { "[VM] Joined room — userId=${event.userId}, nickname=$currentNickname" }
                         currentUserId = event.userId
                         _connectionState.value = ConnectionState.Connected
 
-                        // Start UDP client and register
-                        val udpPort = udpAudioClient.start(currentHost!!)
-                        signalingClient.registerUdp(udpPort)
-
-                        // Start audio engine
-                        audioEngine.start(event.userId)
+                        val manager = WebRtcManager(
+                            onIceCandidate = { candidate ->
+                                scope.launch {
+                                    signalingClient.sendIceCandidate(
+                                        candidate.sdp,
+                                        candidate.sdpMid,
+                                        candidate.sdpMLineIndex
+                                    )
+                                }
+                            },
+                            onAnswer = { sdp ->
+                                scope.launch {
+                                    signalingClient.sendAnswer(sdp)
+                                }
+                            }
+                        )
+                        manager.initialize()
+                        webRtcManager = manager
                     }
                     is SignalingClient.Event.UserList -> {
                         logger.info { "[VM] User list: ${event.users}" }
@@ -92,15 +98,16 @@ class VoiceChatViewModel(
                         _errorMessage.value = event.message
                         _connectionState.value = ConnectionState.Error(event.message)
                     }
+                    is SignalingClient.Event.WebRtcOffer -> {
+                        logger.info { "[VM] Received WebRTC offer, processing..." }
+                        webRtcManager?.handleOffer(event.sdp)
+                    }
+                    is SignalingClient.Event.WebRtcIceCandidate -> {
+                        webRtcManager?.handleIceCandidate(
+                            event.candidate, event.sdpMid, event.sdpMLineIndex
+                        )
+                    }
                 }
-            }
-        }
-    }
-
-    private fun observeAudioPackets() {
-        scope.launch {
-            udpAudioClient.receivedPackets.collect { packet ->
-                audioEngine.receiveAudio(packet.sequenceNumber, packet.audioData)
             }
         }
     }
@@ -112,7 +119,6 @@ class VoiceChatViewModel(
         }
 
         currentNickname = nickname
-        currentHost = host
         _connectionState.value = ConnectionState.Connecting
         _errorMessage.value = null
 
@@ -133,20 +139,19 @@ class VoiceChatViewModel(
         scope.launch {
             logger.info { "[VM] Disconnecting" }
             signalingClient.disconnect()
-            udpAudioClient.stop()
-            audioEngine.stop()
+            webRtcManager?.dispose()
+            webRtcManager = null
             _connectionState.value = ConnectionState.Disconnected
             _userList.value = emptyList()
             currentUserId = null
             currentNickname = null
-            currentHost = null
         }
     }
 
     fun toggleMute() {
         val newMutedState = !_isMuted.value
         _isMuted.value = newMutedState
-        audioEngine.setMuted(newMutedState)
+        webRtcManager?.setMuted(newMutedState)
         logger.info { "[VM] ${if (newMutedState) "Muted" else "Unmuted"}" }
     }
 

@@ -11,13 +11,11 @@ private val logger = KotlinLogging.logger("Room")
 
 class Room(val roomId: String) {
     private val users = ConcurrentHashMap<String, UserSession>()
-    private val nicknames = ConcurrentHashMap<String, String>() // nickname -> userId mapping
+    private val nicknames = ConcurrentHashMap<String, String>()
 
     fun addUser(session: UserSession): Boolean {
-        // Atomically check and add nickname to prevent race condition
         val previousUserId = nicknames.putIfAbsent(session.nickname, session.userId)
         if (previousUserId != null) {
-            // Nickname already taken
             return false
         }
 
@@ -63,12 +61,6 @@ class Room(val roomId: String) {
         } catch (e: Exception) {
             logger.error(e) { "[Room] Failed to send ${message::class.simpleName} to \"${user.nickname}\"" }
         }
-    }
-
-    fun updateUdpAddress(userId: String, address: java.net.InetSocketAddress) {
-        val user = users[userId]
-        user?.udpAddress = address
-        logger.info { "[Room] Updated UDP address for \"${user?.nickname ?: userId}\": $address" }
     }
 
     fun size(): Int = users.size

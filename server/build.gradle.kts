@@ -28,6 +28,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     
+    // WebRTC (native JNI)
+    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
+    
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation("io.github.oshai:kotlin-logging-jvm:6.0.3")

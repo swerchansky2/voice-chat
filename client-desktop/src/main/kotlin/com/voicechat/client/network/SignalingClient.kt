@@ -50,6 +50,12 @@ class SignalingClient {
         data class UserJoined(val nickname: String) : Event()
         data class UserLeft(val nickname: String) : Event()
         data class Error(val message: String) : Event()
+        data class WebRtcOffer(val sdp: String) : Event()
+        data class WebRtcIceCandidate(
+            val candidate: String,
+            val sdpMid: String?,
+            val sdpMLineIndex: Int
+        ) : Event()
     }
 
     private suspend fun DefaultClientWebSocketSession.sendSignalMessage(message: SignalMessage) {
@@ -70,11 +76,9 @@ class SignalingClient {
                 logger.info { "[WS] Connected to server" }
                 _events.emit(Event.Connected)
 
-                // Send join message
                 val joinMessage = SignalMessage.Join(nickname)
                 sendSignalMessage(joinMessage)
 
-                // Listen for messages
                 try {
                     for (frame in incoming) {
                         when (frame) {
@@ -127,6 +131,16 @@ class SignalingClient {
                     logger.warn { "[WS] Received Error — ${message.message}" }
                     _events.emit(Event.Error(message.message))
                 }
+                is SignalMessage.WebRtcOffer -> {
+                    logger.info { "[WS] Received WebRTC Offer" }
+                    _events.emit(Event.WebRtcOffer(message.sdp))
+                }
+                is SignalMessage.WebRtcIceCandidate -> {
+                    logger.debug { "[WS] Received WebRTC ICE candidate" }
+                    _events.emit(Event.WebRtcIceCandidate(
+                        message.candidate, message.sdpMid, message.sdpMLineIndex
+                    ))
+                }
                 else -> {
                     logger.warn { "[WS] Unhandled message type: ${message::class.simpleName}" }
                 }
@@ -136,10 +150,14 @@ class SignalingClient {
         }
     }
 
-    suspend fun registerUdp(port: Int) {
-        val message = SignalMessage.RegisterUdp(port)
-        logger.info { "[WS] Registered UDP port $port with server" }
-        session?.sendSignalMessage(message)
+    suspend fun sendAnswer(sdp: String) {
+        session?.sendSignalMessage(SignalMessage.WebRtcAnswer(sdp))
+    }
+
+    suspend fun sendIceCandidate(candidate: String, sdpMid: String?, sdpMLineIndex: Int) {
+        session?.sendSignalMessage(
+            SignalMessage.WebRtcIceCandidate(candidate, sdpMid, sdpMLineIndex)
+        )
     }
 
     suspend fun disconnect() {

@@ -2,19 +2,23 @@ package com.voicechat.server.websocket
 
 import com.voicechat.server.room.RoomManager
 import com.voicechat.server.room.UserSession
+import com.voicechat.server.sfu.SfuManager
 import com.voicechat.shared.protocol.SignalMessage
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
-import java.net.InetSocketAddress
 import java.util.*
 
 private val logger = KotlinLogging.logger("WS")
 
-class SignalingHandler(private val roomManager: RoomManager) {
+class SignalingHandler(
+    private val roomManager: RoomManager,
+    private val sfuManager: SfuManager
+) {
 
     fun Route.signalingWebSocket() {
         webSocket("/ws/room") {
@@ -89,6 +93,27 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 sendMessage(SignalMessage.UserList(userList))
 
                 room.broadcast(SignalMessage.UserJoined(message.nickname), excludeUserId = userId)
+
+                val wsSession = this
+                sfuManager.createSession(
+                    userId = userId,
+                    onIceCandidate = { candidate ->
+                        runBlocking {
+                            wsSession.sendMessage(
+                                SignalMessage.WebRtcIceCandidate(
+                                    candidate = candidate.sdp,
+                                    sdpMid = candidate.sdpMid,
+                                    sdpMLineIndex = candidate.sdpMLineIndex
+                                )
+                            )
+                        }
+                    },
+                    onOffer = { sdp ->
+                        runBlocking {
+                            wsSession.sendMessage(SignalMessage.WebRtcOffer(sdp))
+                        }
+                    }
+                )
             }
 
             is SignalMessage.Leave -> {
@@ -101,23 +126,22 @@ class SignalingHandler(private val roomManager: RoomManager) {
                 updateSession(null, null, roomId)
             }
 
-            is SignalMessage.RegisterUdp -> {
+            is SignalMessage.WebRtcAnswer -> {
                 if (currentUserId == null) {
                     sendMessage(SignalMessage.Error("Not joined"))
                     return
                 }
+                sfuManager.getSession(currentUserId)?.handleAnswer(message.sdp)
+            }
 
-                val room = roomManager.getRoom(roomId)
-                if (room == null) {
-                    sendMessage(SignalMessage.Error("Room not found"))
+            is SignalMessage.WebRtcIceCandidate -> {
+                if (currentUserId == null) {
+                    sendMessage(SignalMessage.Error("Not joined"))
                     return
                 }
-
-                val clientAddress = call.request.local.remoteAddress
-                val udpAddress = InetSocketAddress(clientAddress, message.port)
-                room.updateUdpAddress(currentUserId, udpAddress)
-
-                logger.info { "[WS] User \"${currentNickname}\" registered UDP address $udpAddress" }
+                sfuManager.getSession(currentUserId)?.handleIceCandidate(
+                    message.candidate, message.sdpMid, message.sdpMLineIndex
+                )
             }
 
             else -> {
@@ -127,6 +151,8 @@ class SignalingHandler(private val roomManager: RoomManager) {
     }
 
     private suspend fun DefaultWebSocketServerSession.handleDisconnect(userId: String, nickname: String?, roomId: String) {
+        sfuManager.removeSession(userId)
+
         val room = roomManager.getRoom(roomId) ?: return
         val userSession = room.removeUser(userId)
 
