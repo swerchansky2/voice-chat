@@ -1,0 +1,39 @@
+{
+  "configurations": [
+    {
+      "name": "Linux",
+      "compilerPath": "/usr/bin/clang",
+      "cStandard": "gnu17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "linux-clang-x64",
+      "includePath": [
+        "${workspaceFolder}/webrtc-native/src/main/cpp",
+        "${workspaceFolder}/webrtc-native/webrtc-src",
+        "${workspaceFolder}/webrtc-native/webrtc-src/include",
+        "${workspaceFolder}/webrtc-native/webrtc-src/out/Default/include",
+        "${workspaceFolder}/webrtc-native/webrtc-src/out/Default/obj",
+        "${workspaceFolder}/webrtc-native/build/include",
+        "${workspaceFolder}/**",
+        "${env:JAVA_HOME}/include",
+        "${env:JAVA_HOME}/include/linux",
+        "/usr/include",
+        "/usr/local/include"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/webrtc-native/webrtc-src",
+          "${workspaceFolder}/webrtc-native/webrtc-src/out/Default/include",
+          "${workspaceFolder}/webrtc-native/src/main/cpp",
+          "${workspaceFolder}/**",
+          "${env:JAVA_HOME}/include",
+          "${env:JAVA_HOME}/include/linux"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "forcedInclude": [],
+      "defines": [],
+      "compileCommands": "${workspaceFolder}/webrtc-native/compile_commands.json"
+    }
+  ],
+  "version": 4
+}

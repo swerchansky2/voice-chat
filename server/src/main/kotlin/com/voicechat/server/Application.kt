@@ -21,7 +21,7 @@ import kotlin.time.Duration.Companion.seconds
 private val logger = KotlinLogging.logger("Server")
 
 fun main() {
-    val httpPort = System.getenv("HTTP_PORT")?.toIntOrNull() ?: 8080
+    val httpPort = System.getenv("HTTP_PORT")?.toIntOrNull() ?: 1234
     val udpPort = System.getenv("UDP_PORT")?.toIntOrNull() ?: 9001
 
     // Validate port ranges
