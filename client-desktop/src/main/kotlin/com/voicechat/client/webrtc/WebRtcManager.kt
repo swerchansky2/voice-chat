@@ -35,11 +35,9 @@ class WebRtcManager(
         }
 
         val config = RTCConfiguration().apply {
-            iceServers = listOf(
-                RTCIceServer().apply {
-                    urls = listOf("stun:stun.l.google.com:19302")
-                }
-            )
+            iceServers.add(RTCIceServer().apply {
+                urls.add("stun:stun.l.google.com:19302")
+            })
         }
 
         val observer = object : PeerConnectionObserver {
@@ -56,8 +54,8 @@ class WebRtcManager(
                 logger.info { "[WebRTC] Connection: $state" }
             }
 
-            override fun onTrack(event: RTCRtpTransceiverEvent) {
-                val track = event.transceiver.receiver.track
+            override fun onTrack(transceiver: RTCRtpTransceiver) {
+                val track = transceiver.receiver.track
                 logger.info { "[WebRTC] Remote track received: ${track?.kind}" }
             }
         }

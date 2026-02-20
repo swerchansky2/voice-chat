@@ -1,11 +1,11 @@
 package com.voicechat.server.sfu
 
 import dev.onvoid.webrtc.*
+import dev.onvoid.webrtc.media.MediaStream
 import dev.onvoid.webrtc.media.audio.AudioTrack
 import dev.onvoid.webrtc.media.audio.AudioTrackSink
 import dev.onvoid.webrtc.media.audio.CustomAudioSource
 import io.github.oshai.kotlinlogging.KotlinLogging
-import java.util.Collections
 
 private val logger = KotlinLogging.logger("UserMedia")
 
@@ -23,11 +23,9 @@ class UserMediaSession(
 
     fun start() {
         val config = RTCConfiguration().apply {
-            iceServers = listOf(
-                RTCIceServer().apply {
-                    urls = listOf("stun:stun.l.google.com:19302")
-                }
-            )
+            iceServers.add(RTCIceServer().apply {
+                urls.add("stun:stun.l.google.com:19302")
+            })
         }
 
         val observer = object : PeerConnectionObserver {
@@ -44,8 +42,8 @@ class UserMediaSession(
                 logger.info { "[UserMedia:$userId] Connection: $state" }
             }
 
-            override fun onTrack(event: RTCRtpTransceiverEvent) {
-                val track = event.transceiver.receiver.track
+            override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {
+                val track = receiver.track
                 if (track is AudioTrack) {
                     logger.info { "[UserMedia:$userId] Received remote audio track" }
                     val sink = AudioTrackSink { data, bitsPerSample, sampleRate, channels, frames ->
@@ -61,15 +59,10 @@ class UserMediaSession(
 
         sendTrack = factory.createAudioTrack("send-$userId", sendSource)
 
-        val sendInit = RTCRtpTransceiverInit().apply {
-            direction = RTCRtpTransceiverDirection.SEND_ONLY
+        val init = RTCRtpTransceiverInit().apply {
+            direction = RTCRtpTransceiverDirection.SEND_RECV
         }
-        peerConnection!!.addTransceiver(sendTrack, sendInit)
-
-        val recvInit = RTCRtpTransceiverInit().apply {
-            direction = RTCRtpTransceiverDirection.RECV_ONLY
-        }
-        peerConnection!!.addTransceiver(dev.onvoid.webrtc.media.MediaType.AUDIO, recvInit)
+        peerConnection!!.addTransceiver(sendTrack, init)
 
         audioMixer.addUser(userId) { mixedAudio ->
             sendSource.pushAudio(
