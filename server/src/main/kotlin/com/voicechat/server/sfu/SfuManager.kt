@@ -49,8 +49,8 @@ class SfuManager {
             userId = userId,
             factory = factory,
             audioMixer = audioMixer,
-            onIceCandidate = onIceCandidate,
-            onOffer = onOffer
+            iceCandidateCallback = onIceCandidate,
+            offerCallback = onOffer
         )
         sessions[userId] = session
         session.start()

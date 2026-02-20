@@ -63,7 +63,7 @@ class VoiceChatViewModel(
                         _connectionState.value = ConnectionState.Connected
 
                         val manager = WebRtcManager(
-                            onIceCandidate = { candidate ->
+                            iceCandidateCallback = { candidate ->
                                 scope.launch {
                                     signalingClient.sendIceCandidate(
                                         candidate.sdp,
@@ -72,7 +72,7 @@ class VoiceChatViewModel(
                                     )
                                 }
                             },
-                            onAnswer = { sdp ->
+                            answerCallback = { sdp ->
                                 scope.launch {
                                     signalingClient.sendAnswer(sdp)
                                 }

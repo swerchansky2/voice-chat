@@ -9,8 +9,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 private val logger = KotlinLogging.logger("WebRTC")
 
 class WebRtcManager(
-    private val onIceCandidate: (RTCIceCandidate) -> Unit,
-    private val onAnswer: (String) -> Unit
+    private val iceCandidateCallback: (RTCIceCandidate) -> Unit,
+    private val answerCallback: (String) -> Unit
 ) {
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: RTCPeerConnection? = null
@@ -43,7 +43,7 @@ class WebRtcManager(
         val observer = object : PeerConnectionObserver {
             override fun onIceCandidate(candidate: RTCIceCandidate) {
                 logger.debug { "[WebRTC] Local ICE candidate: ${candidate.sdp}" }
-                onIceCandidate(candidate)
+                iceCandidateCallback(candidate)
             }
 
             override fun onIceConnectionChange(state: RTCIceConnectionState) {
@@ -99,7 +99,7 @@ class WebRtcManager(
                 pc.setLocalDescription(description, object : SetSessionDescriptionObserver {
                     override fun onSuccess() {
                         logger.info { "[WebRTC] Local description (answer) set, sending answer" }
-                        onAnswer(description.sdp)
+                        answerCallback(description.sdp)
                     }
 
                     override fun onFailure(error: String) {

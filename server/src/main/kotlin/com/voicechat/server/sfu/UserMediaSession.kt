@@ -13,8 +13,8 @@ class UserMediaSession(
     val userId: String,
     private val factory: PeerConnectionFactory,
     private val audioMixer: AudioMixer,
-    private val onIceCandidate: (RTCIceCandidate) -> Unit,
-    private val onOffer: (String) -> Unit
+    private val iceCandidateCallback: (RTCIceCandidate) -> Unit,
+    private val offerCallback: (String) -> Unit
 ) {
     private val sendSource = CustomAudioSource()
     private var sendTrack: AudioTrack? = null
@@ -31,7 +31,7 @@ class UserMediaSession(
         val observer = object : PeerConnectionObserver {
             override fun onIceCandidate(candidate: RTCIceCandidate) {
                 logger.debug { "[UserMedia:$userId] ICE candidate: ${candidate.sdp}" }
-                onIceCandidate(candidate)
+                iceCandidateCallback(candidate)
             }
 
             override fun onIceConnectionChange(state: RTCIceConnectionState) {
@@ -85,7 +85,7 @@ class UserMediaSession(
                 pc.setLocalDescription(description, object : SetSessionDescriptionObserver {
                     override fun onSuccess() {
                         logger.info { "[UserMedia:$userId] Local description set, sending offer" }
-                        onOffer(description.sdp)
+                        offerCallback(description.sdp)
                     }
 
                     override fun onFailure(error: String) {
