@@ -13,6 +13,8 @@
 #include "rtc_session_description.h"
 #include "rtc_ice_candidate.h"
 
+class JavaAudioSink;
+
 class AudioManager {
 public:
     static AudioManager& instance();
@@ -45,7 +47,7 @@ private:
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioSource> audioSource;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioTrack> audioTrack;
         // store sinks attached to remote audio tracks so they live as long as peer
-        std::vector<std::unique_ptr<libwebrtc::AudioTrackSink>> audioSinks;
+        std::vector<std::unique_ptr<JavaAudioSink>> audioSinks;
         // keep observer alive
         std::unique_ptr<libwebrtc::RTCPeerConnectionObserver> observer;
         std::thread audioThread;

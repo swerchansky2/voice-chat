@@ -50,8 +50,46 @@ AudioManager::~AudioManager() {
     shutdown();
 }
 
-// Forward declaration
-class JavaAudioSink;
+// AudioTrackSink that forwards decoded audio frames to Java via JNI
+class JavaAudioSink : public libwebrtc::AudioTrackSink {
+public:
+    JavaAudioSink(int peerId) : peerId_(peerId) {}
+
+    void OnData(const void* audio_data, int bits_per_sample, int sample_rate,
+                size_t number_of_channels, size_t number_of_frames) override {
+        if (!gJvm) return;
+        JNIEnv* env = nullptr;
+        bool attached = false;
+        int getEnvStat = gJvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (getEnvStat == JNI_EDETACHED) {
+            if (gJvm->AttachCurrentThread((void**)&env, nullptr) != 0) return;
+            attached = true;
+        } else if (getEnvStat == JNI_EVERSION || env == nullptr) {
+            return;
+        }
+
+        jclass cls = env->FindClass("com/voicechat/client/native/WebrtcNative");
+        if (!cls) goto done;
+        {
+            jmethodID mid = env->GetStaticMethodID(cls, "onRemoteAudioFrame", "(I[B)V");
+            if (!mid) goto done;
+
+            const size_t bytes = number_of_frames * number_of_channels * (bits_per_sample / 8);
+            jbyteArray arr = env->NewByteArray((jsize)bytes);
+            if (arr) {
+                env->SetByteArrayRegion(arr, 0, (jsize)bytes, reinterpret_cast<const jbyte*>(audio_data));
+                env->CallStaticVoidMethod(cls, mid, (jint)peerId_, arr);
+                env->DeleteLocalRef(arr);
+            }
+        }
+    done:
+        if (cls) env->DeleteLocalRef(cls);
+        if (attached) gJvm->DetachCurrentThread();
+    }
+
+private:
+    int peerId_;
+};
 
 // Observer that attaches sinks for incoming audio tracks and forwards ICE candidates to Java
 class PeerObserver : public libwebrtc::RTCPeerConnectionObserver {
@@ -122,49 +160,6 @@ public:
 private:
     std::shared_ptr<AudioManager::Peer> peer_;
 };
-
-// Helper: A simple AudioTrackSink implementation that forwards audio frames to Java
-class JavaAudioSink : public libwebrtc::AudioTrackSink {
-public:
-    JavaAudioSink(int peerId) : peerId_(peerId) {}
-
-    void OnData(const void* audio_data, int bits_per_sample, int sample_rate,
-                size_t number_of_channels, size_t number_of_frames) override {
-    // Attach to JVM and call static Java method WebrtcNative.onRemoteAudioFrame(peerId, byte[])
-    if (!gJvm) return;
-        JNIEnv* env = nullptr;
-        bool attached = false;
-        int getEnvStat = gJvm->GetEnv((void**)&env, JNI_VERSION_1_6);
-        if (getEnvStat == JNI_EDETACHED) {
-            if (gJvm->AttachCurrentThread((void**)&env, nullptr) != 0) return;
-            attached = true;
-        } else if (getEnvStat == JNI_EVERSION || env == nullptr) {
-            return;
-        }
-
-        jclass cls = env->FindClass("com/voicechat/client/native/WebrtcNative");
-        if (!cls) goto done;
-
-        jmethodID mid = env->GetStaticMethodID(cls, "onRemoteAudioFrame", "(I[B)V");
-        if (!mid) goto done;
-
-        const size_t bytes = number_of_frames * number_of_channels * (bits_per_sample / 8);
-        jbyteArray arr = env->NewByteArray((jsize)bytes);
-        if (arr) {
-            env->SetByteArrayRegion(arr, 0, (jsize)bytes, reinterpret_cast<const jbyte*>(audio_data));
-            env->CallStaticVoidMethod(cls, mid, (jint)peerId_, arr);
-            env->DeleteLocalRef(arr);
-        }
-
-    done:
-        if (attached) gJvm->DetachCurrentThread();
-    }
-
-private:
-    int peerId_;
-};
-
-
 
 int AudioManager::initialize() {
     std::lock_guard<std::mutex> g(mtx_);
