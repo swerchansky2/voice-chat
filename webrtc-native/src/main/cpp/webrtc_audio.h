@@ -14,6 +14,7 @@
 #include "rtc_ice_candidate.h"
 
 class JavaAudioSink;
+class PeerObserver;
 
 class AudioManager {
 public:
@@ -39,7 +40,7 @@ public:
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioSource> audioSource;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioTrack> audioTrack;
         std::vector<std::unique_ptr<JavaAudioSink>> audioSinks;
-        std::unique_ptr<libwebrtc::RTCPeerConnectionObserver> observer;
+        std::unique_ptr<PeerObserver> observer;
         std::thread audioThread;
         bool audioRunning = false;
     };
