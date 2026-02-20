@@ -91,7 +91,8 @@ private:
     int peerId_;
 };
 
-// Observer that attaches sinks for incoming audio tracks and forwards ICE candidates to Java
+using libwebrtc::scoped_refptr;
+
 class PeerObserver : public libwebrtc::RTCPeerConnectionObserver {
 public:
     PeerObserver(std::shared_ptr<AudioManager::Peer> peer) : peer_(peer) {}

@@ -19,11 +19,9 @@ class AudioManager {
 public:
     static AudioManager& instance();
 
-    // Initialize libwebrtc runtime and factory. Returns 0 on success.
     int initialize();
     void shutdown();
 
-    // Peer connection lifecycle
     int createPeerConnection();
     std::string createOffer(int peerId);
     std::string createAnswer(int peerId);
@@ -31,28 +29,24 @@ public:
     int addIceCandidate(int peerId, const std::string& candidate, const std::string& sdpMid, int sdpMLineIndex);
     int closePeerConnection(int peerId);
 
-    // Audio utilities
     int addLocalAudioTrack(int peerId, const std::string& trackId);
-    int startAudioGenerator(int peerId); // generates synthetic audio into the RTCAudioSource
-    // Push captured PCM frames (16-bit little-endian) into native audio source for the peer
+    int startAudioGenerator(int peerId);
     int pushAudioFrame(int peerId, const void* audio_data, int bitsPerSample, int sampleRate, int channels, int frames);
-
-private:
-    AudioManager();
-    ~AudioManager();
 
     struct Peer {
         int id = -1;
         libwebrtc::scoped_refptr<libwebrtc::RTCPeerConnection> pc;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioSource> audioSource;
         libwebrtc::scoped_refptr<libwebrtc::RTCAudioTrack> audioTrack;
-        // store sinks attached to remote audio tracks so they live as long as peer
         std::vector<std::unique_ptr<JavaAudioSink>> audioSinks;
-        // keep observer alive
         std::unique_ptr<libwebrtc::RTCPeerConnectionObserver> observer;
         std::thread audioThread;
         bool audioRunning = false;
     };
+
+private:
+    AudioManager();
+    ~AudioManager();
 
     std::mutex mtx_;
     int nextPeerId_ = 1;
