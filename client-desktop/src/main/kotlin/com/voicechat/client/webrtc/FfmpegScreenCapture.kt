@@ -99,7 +99,7 @@ class FfmpegScreenCapture(
 
                 val frame = VideoFrame(buffer, System.nanoTime())
                 videoSource.pushFrame(frame)
-                frame.dispose()
+                frame.release()
             }
         } catch (e: Exception) {
             if (running.get()) logger.warn(e) { "[FFmpegCapture] Error reading frames" }
